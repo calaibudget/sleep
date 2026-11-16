@@ -1,0 +1,965 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sleep</title>
+<meta name="theme-color" content="#f6f2ec">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Sleep">
+<meta name="description" content="Personal sleep tracker for Fitbit Air. Your data goes from Google straight to this phone.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<style>
+:root{
+  --paper:#f6f2ec; --card:#fff; --chip:#f3ece4; --line:#ece4da;
+  --ink:#1f1b17; --ink-2:#5b5249; --ink-3:#8a8177;
+  --coral:#e2603f; --coral-soft:#fbe3d9;
+  /* stages: one ordinal blue ramp (deep -> REM) + coral awake, validated on white */
+  --deep:#283a7a; --light:#5b6fd6; --rem:#a9a3ee; --awake:#e2603f;
+  --shadow:0 14px 32px -22px rgba(80,55,30,.45);
+  --sat:env(safe-area-inset-top,0px); --sab:env(safe-area-inset-bottom,0px);
+  --font:-apple-system,"SF Pro Text",BlinkMacSystemFont,"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  --display:-apple-system,"SF Pro Display",BlinkMacSystemFont,"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.4 var(--font);-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%}
+body{overscroll-behavior-y:none}
+html{scrollbar-width:none}html::-webkit-scrollbar{display:none}
+button,input,textarea{font:inherit;color:inherit}
+a{color:var(--deep)}
+.num{font-variant-numeric:tabular-nums}
+.app{max-width:520px;margin:0 auto;min-height:100vh;padding:calc(var(--sat) + 4px) 18px calc(var(--sab) + 96px)}
+
+/* top bar */
+.top{position:sticky;top:0;z-index:20;margin:0 -18px;padding:calc(var(--sat) + 8px) 18px 8px;background:linear-gradient(var(--paper) 78%,rgba(246,242,236,0))}
+.top .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.datenav{display:flex;align-items:center;gap:2px;margin-left:-8px}
+.datenav button{appearance:none;border:0;background:none;width:36px;height:36px;border-radius:50%;display:grid;place-items:center;color:var(--ink-2);cursor:pointer}
+.datenav button:active{background:var(--chip)}
+.datenav button:disabled{opacity:.25}
+.datenav span{font-weight:600;color:var(--ink-2);font-size:15.5px;min-width:96px;text-align:center}
+.chip-sample{font-size:11.5px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;padding:4px 9px;border-radius:999px;background:#ffe3c7;color:#a3471f;border:0}
+.chip-sync{font-size:12.5px;font-weight:600;color:var(--ink-3);display:inline-flex;gap:6px;align-items:center;background:none;border:0;padding:6px 0}
+.chip-sync i{width:7px;height:7px;border-radius:50%;background:#2fa84f}
+.title{font:700 30px/1.13 var(--display);letter-spacing:-.6px;margin:4px 0 6px}
+.title em{font-style:normal;color:var(--coral)}
+.lede{color:var(--ink-2);font-size:16px;margin:0 0 18px}
+
+/* cards */
+.card{background:var(--card);border-radius:26px;padding:18px;margin-bottom:14px;box-shadow:var(--shadow)}
+.card h2{font:700 17px/1.25 var(--display);margin:0}
+.card .sub{color:var(--ink-3);font-size:13.5px;margin-top:2px}
+.card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px}
+.k{font-size:13.5px;font-weight:600;color:var(--ink-3)}
+.hero .row{display:flex;justify-content:space-between;align-items:flex-end}
+.hero .big{font:800 88px/0.88 var(--display);letter-spacing:-3.5px;color:var(--coral);margin-top:6px}
+.hero .usual{text-align:right}
+.hero .usual b{display:block;font:700 23px/1.2 var(--display)}
+.hero .usual span{font-size:13px;color:var(--ink-3)}
+.rangebar{position:relative;height:22px;margin:16px 0 4px}
+.rangebar .tr{position:absolute;left:0;right:0;top:9px;height:4px;border-radius:4px;background:var(--chip)}
+.rangebar .band{position:absolute;top:5px;height:12px;border-radius:6px;background:#e9e1f7}
+.rangebar .med{position:absolute;top:3px;width:2px;height:16px;margin-left:-1px;background:var(--light);border-radius:2px}
+.rangebar .me{position:absolute;top:2px;width:18px;height:18px;margin-left:-9px;border-radius:50%;background:var(--coral);box-shadow:0 0 0 3px #fff}
+.rangecap{display:flex;justify-content:space-between;font-size:12px;color:var(--ink-3)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px}
+.chips span{font-size:13px;font-weight:600;padding:6px 11px;border-radius:999px;background:var(--chip);color:var(--ink-2)}
+.chips span b{color:var(--ink)}
+.how{margin-top:12px;font-size:14px;color:var(--ink-2)}
+.how summary{color:var(--deep);font-weight:600;cursor:pointer;list-style:none}
+.how summary::-webkit-details-marker{display:none}
+.how p{margin:8px 0 0}
+.mini{margin-top:16px}
+.mini .cap{display:flex;justify-content:space-between;font-size:12px;color:var(--ink-3);margin-bottom:6px}
+
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+.tile{background:var(--card);border-radius:22px;padding:14px 15px 13px;box-shadow:var(--shadow);min-height:96px}
+.tile .k{display:flex;align-items:center;gap:6px;font-size:13px}
+.tile .k i{width:9px;height:9px;border-radius:3px;display:inline-block}
+.tile .v{font:700 26px/1.2 var(--display);margin-top:4px;letter-spacing:-.3px}
+.tile .v small{font:600 14px var(--font);color:var(--ink-3);margin-left:3px;letter-spacing:0}
+.tile .d{font-size:12.5px;color:var(--ink-3);margin-top:2px}
+
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-2);margin-top:10px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+.legend i.pin{border-radius:50%;border:2px solid var(--coral);background:#fff}
+.legend i.up{background:repeating-linear-gradient(45deg,rgba(226,96,63,.6) 0 2px,transparent 2px 4px)}
+.toggle{appearance:none;border:0;background:var(--chip);border-radius:999px;padding:6px 12px;font-size:13px;font-weight:600;color:var(--ink-2);cursor:pointer}
+.toggle[aria-pressed=true]{background:var(--ink);color:#fff}
+.tl{touch-action:pan-y;position:relative}
+svg text{font-family:var(--font)}
+
+.wake{display:flex;align-items:center;gap:12px;padding:11px 0;border-top:1px solid var(--line)}
+.wake:first-child{border-top:0}
+.wake .dot{width:12px;height:12px;border-radius:50%;border:2.5px solid var(--coral);flex:none}
+.wake .dot.full{background:var(--coral)}
+.wake .t{font-weight:700;width:52px}
+.wake .w{flex:1;color:var(--ink-2);font-size:14.5px}
+.wake .l{font-weight:600;font-size:14.5px}
+.badge{font-size:11.5px;font-weight:700;padding:3px 8px;border-radius:999px;background:var(--coral-soft);color:#a3471f;margin-left:6px}
+.more{appearance:none;border:0;background:none;color:var(--deep);font-weight:600;padding:10px 0 0;cursor:pointer}
+
+.addrow{display:flex;gap:8px;margin-top:12px}
+.input{flex:1;min-width:0;background:var(--chip);border:1.5px solid transparent;border-radius:14px;padding:11px 13px;outline:none;font-size:16px}
+.input:focus{border-color:var(--light);background:#fff}
+
+.btn{appearance:none;border:0;border-radius:16px;padding:13px 18px;font-weight:700;font-size:16px;background:var(--chip);color:var(--ink);cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.btn.primary{background:var(--ink);color:#fff}
+.btn.coral{background:var(--coral);color:#fff}
+.btn.block{width:100%}
+.btn:disabled{opacity:.45}
+.btn.small{padding:9px 14px;font-size:14px;border-radius:12px}
+
+/* trends */
+.seg{display:flex;background:#ebe4da;border-radius:14px;padding:3px;margin:0 0 14px}
+.seg button{flex:1;appearance:none;border:0;background:none;border-radius:11px;padding:8px 0;font-weight:600;font-size:14px;color:var(--ink-2);cursor:pointer}
+.seg button[aria-pressed=true]{background:#fff;color:var(--ink);box-shadow:0 2px 6px rgba(80,55,30,.15)}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+
+
+/* you */
+.metric .lab{display:flex;justify-content:space-between;font-size:13.5px;color:var(--ink-2);margin-bottom:6px}
+.metric .lab b{color:var(--ink)}
+.steps{margin:0;padding:0;list-style:none;counter-reset:s}
+.steps li{counter-increment:s;position:relative;padding:0 0 16px 40px;font-size:15px;color:var(--ink-2)}
+.steps li::before{content:counter(s);position:absolute;left:0;top:-1px;width:27px;height:27px;border-radius:50%;background:var(--chip);color:var(--ink);font-weight:700;font-size:13.5px;display:grid;place-items:center}
+.steps li b{display:block;color:var(--ink)}
+.code{font:13px ui-monospace,"SF Mono",Menlo,Consolas,monospace;background:var(--chip);border-radius:8px;padding:2px 6px;word-break:break-all}
+.copy{appearance:none;border:0;background:none;color:var(--deep);font-weight:700;font-size:13.5px;padding:2px 4px;cursor:pointer}
+.form{display:grid;gap:10px;margin-top:8px}
+.state{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}
+.st{background:var(--chip);border-radius:16px;padding:11px 12px}
+.st small{display:block;font-size:12.5px;color:var(--ink-3)}
+.st b{font-size:15.5px}
+.ok{color:#2a8a45}.no{color:#b5462a}
+.note{font-size:13.5px;color:var(--ink-3);margin-top:10px}
+.log{font-size:13px;color:var(--ink-2);margin-top:8px}
+.log div{padding:4px 0;border-top:1px solid var(--line)}
+.banner{display:flex;gap:10px;align-items:flex-start;background:#fff1df;border-radius:18px;padding:12px 14px;margin:0 0 14px;font-size:14px;color:#6b4a1f}
+.banner b{color:#3d2a10}
+
+/* tab bar */
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;justify-content:center;padding:8px 0 calc(var(--sab) + 8px);background:rgba(246,242,236,.86);backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3);border-top:1px solid rgba(0,0,0,.05)}
+.tabbar .in{display:flex;justify-content:space-around;width:100%;max-width:520px}
+.tabbar button{appearance:none;border:0;background:none;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;font-weight:600;color:#a39b91;min-width:64px;cursor:pointer;padding:2px 0}
+.tabbar button[aria-selected=true]{color:var(--ink)}
+.tabbar svg{width:25px;height:25px}
+
+/* tooltip bubble */
+.bubble{position:fixed;z-index:40;pointer-events:none;background:var(--ink);color:#fff;border-radius:12px;padding:8px 11px;font-size:13px;line-height:1.35;opacity:0;transition:opacity .12s;max-width:240px;box-shadow:0 10px 24px -10px rgba(0,0,0,.5)}
+.bubble b{font-weight:700}
+section[hidden]{display:none}
+.empty{color:var(--ink-3);text-align:center;padding:24px 8px}
+.handoff{text-align:center;padding-top:40px}
+.handoff .title{margin-top:16px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top"><div class="row">
+    <div class="datenav" id="datenav"><button id="prev" aria-label="Previous night"><svg width="18" height="18" viewBox="0 0 18 18"><path d="M11 3 5 9l6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button><span id="dateLbl">–</span><button id="next" aria-label="Next night"><svg width="18" height="18" viewBox="0 0 18 18"><path d="m7 3 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+    <div id="topRight"></div>
+  </div></header>
+
+  <section id="s-night"></section>
+  <section id="s-trends" hidden></section>
+  <section id="s-you" hidden></section>
+</div>
+<nav class="tabbar" aria-label="Sections"><div class="in" role="tablist">
+  <button role="tab" data-tab="night" aria-selected="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 21a9 9 0 0 1-6.7-15.1 8 8 0 1 0 10.2 10.9A9 9 0 0 1 15.5 21z"/></svg>Night</button>
+  <button role="tab" data-tab="trends" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 20V12M10 20V6M15 20v-9M20 20V4"/></svg>Trends</button>
+  <button role="tab" data-tab="you" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0" stroke-linecap="round"/></svg>You</button>
+</div></nav>
+<div class="bubble" id="bubble"></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   Sleep (iPhone web app). Runs entirely on this device:
+   - signs in to Google (you type your password on Google's own page)
+   - reads your sleep from the Google Health API, read-only
+   - stores it in this browser's own storage. No other server.
+   ===================================================================== */
+const STAGE = {
+  D:{name:"Deep",   color:"var(--deep)",  hex:"#1c5cab", lane:3},
+  L:{name:"Light",  color:"var(--light)", hex:"#3987e5", lane:2},
+  R:{name:"REM",    color:"var(--rem)",   hex:"#86b6ef", lane:1},
+  W:{name:"Awake",  color:"var(--awake)", hex:"#d95926", lane:0},
+  A:{name:"Asleep", color:"var(--light)", hex:"#3987e5", lane:2},
+  X:{name:"Restless",color:"var(--awake)",hex:"#d95926", lane:0},
+};
+const SLEEP_CODES = new Set(["D","L","R","A"]);
+
+const pad = (n) => String(n).padStart(2,"0");
+const DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"], MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const loc = (ms, off) => new Date(ms + (off||0)*60000);
+const clock = (ms, off) => { const d = loc(ms, off); return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`; };
+const minOfDay = (ms, off) => { const d = loc(ms, off); return d.getUTCHours()*60 + d.getUTCMinutes(); };
+const dur = (m) => { if (m == null || !isFinite(m)) return "–"; m = Math.round(m); const h = Math.floor(m/60), r = m%60; return h ? `${h}h ${pad(r)}m` : `${r}m`; };
+const durShort = (min) => min < 1 ? `${Math.round(min*60)}s` : min < 10 ? `${(Math.round(min*10)/10).toString().replace(/\.0$/,"")} min` : `${Math.round(min)} min`;
+const parseYmd = (s) => { const [y,m,d] = s.split("-").map(Number); return new Date(Date.UTC(y, m-1, d)); };
+const ymd = (d) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`;
+const addDays = (s, n) => { const d = parseYmd(s); d.setUTCDate(d.getUTCDate()+n); return ymd(d); };
+const dayLabel = (s) => { const d = parseYmd(s); return `${DOW[d.getUTCDay()]} ${d.getUTCDate()} ${MON[d.getUTCMonth()]}`; };
+const shortLabel = (s) => { const d = parseYmd(s); return `${d.getUTCDate()} ${MON[d.getUTCMonth()]}`; };
+const median = (a) => { const v = a.filter(x => x != null && isFinite(x)).sort((x,y)=>x-y); if (!v.length) return null; const m = Math.floor(v.length/2); return v.length%2 ? v[m] : (v[m-1]+v[m])/2; };
+const quant = (a, q) => { const v = a.filter(x => x != null && isFinite(x)).sort((x,y)=>x-y); if (!v.length) return null; const i = (v.length-1)*q, lo = Math.floor(i), hi = Math.ceil(i); return v[lo] + (v[hi]-v[lo])*(i-lo); };
+const mean = (a) => { const v = a.filter(x => x != null && isFinite(x)); return v.length ? v.reduce((s,x)=>s+x,0)/v.length : null; };
+const sd = (a) => { const m = mean(a); const v = a.filter(x => x != null && isFinite(x)); return v.length > 1 ? Math.sqrt(v.reduce((s,x)=>s+(x-m)**2,0)/(v.length-1)) : null; };
+const round1 = (x) => x == null ? null : Math.round(x*10)/10;
+const signed = (x, digits=0, unit="") => x == null ? "" : `${x > 0 ? "+" : x < 0 ? "−" : "±"}${Math.abs(x).toFixed(digits)}${unit}`;
+
+function computeMetrics(n) {
+  const st = n.stages || [];
+  const sleepSt = st.filter(s => SLEEP_CODES.has(s[0]));
+  const onset = sleepSt.length ? sleepSt[0][1] : n.start;
+  const finalWake = sleepSt.length ? sleepSt[sleepSt.length-1][2] : n.end;
+  const raw = [];
+  for (const s of st) if ((s[0] === "W" || s[0] === "X") && s[1] >= onset && s[2] <= finalWake) raw.push([s[1], s[2], "stage"]);
+  for (const s of (n.short || [])) if (s[0] >= onset && s[1] <= finalWake) raw.push([s[0], s[1], "short"]);
+  raw.sort((a,b) => a[0]-b[0]);
+  const merged = [];
+  for (const r of raw) { const last = merged[merged.length-1]; if (last && r[0] <= last[1] + 60000) last[1] = Math.max(last[1], r[1]); else merged.push([r[0], r[1]]); }
+  const stageAt = (t) => { for (const s of st) if (t >= s[1] && t < s[2]) return s[0]; return null; };
+  const events = merged.map(([s,e], i) => {
+    const m = (e - s)/60000;
+    const up = (n.oob || []).some(o => o[0] < e && o[1] > s);
+    let before = null; for (const x of st) { if (x[2] <= s + 1000 && SLEEP_CODES.has(x[0])) before = x[0]; if (x[1] > s) break; }
+    if (!before) before = stageAt(s - 1000);
+    return {i:i+1, s, e, min:m, kind: m < 3 ? "brief" : m <= 5 ? "short" : "full", up, before};
+  });
+  const minsBy = {D:0,L:0,R:0,W:0,A:0,X:0};
+  for (const s of st) minsBy[s[0]] = (minsBy[s[0]]||0) + (s[2]-s[1])/60000;
+  const asleep = n.sum?.asleep ?? (minsBy.D + minsBy.L + minsBy.R + minsBy.A);
+  const inBed = (n.end - n.start)/60000;
+  let wakeIn = 0; for (const s of st) if ((s[0]==="W"||s[0]==="X") && s[1] >= onset && s[2] <= finalWake) wakeIn += (s[2]-s[1])/60000;
+  const latency = n.sum?.toFall ?? Math.max(0, (onset - n.start)/60000);
+  return {
+    onset, finalWake, events, count: events.length,
+    perHour: asleep > 0 ? events.length/(asleep/60) : null,
+    brief: events.filter(e=>e.kind==="brief").length, shortN: events.filter(e=>e.kind==="short").length,
+    full: events.filter(e=>e.kind==="full").length, up: (n.oob||[]).length,
+    deep: minsBy.D, light: minsBy.L + minsBy.A, rem: minsBy.R, awakeIn: wakeIn,
+    asleep, inBed, eff: inBed > 0 ? asleep/inBed : null, latency, classic: n.type === "CLASSIC",
+  };
+}
+
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function makeSample() {
+  const rnd = mulberry32(20261116), R = (a,b) => a + (b-a)*rnd(), gauss = () => { let u=0; for (let i=0;i<6;i++) u+=rnd(); return u-3; };
+  const OFF = 180; // sample nights use Riyadh time (UTC+3)
+  const nights = [], daily = {}, tags = {byDate:{}, custom:[]}, hr = new Map();
+  const todayLocal = new Date(Date.now() + OFF*60000); const today = ymd(new Date(Date.UTC(todayLocal.getUTCFullYear(), todayLocal.getUTCMonth(), todayLocal.getUTCDate())));
+  for (let k = 119; k >= 0; k--) {
+    const date = addDays(today, -k), bedDay = addDays(date, -1), dow = parseYmd(bedDay).getUTCDay();
+    if (k === 41 || k === 77) continue; // two nights with no record, as happens when the band is off
+    const weekend = dow === 4 || dow === 5;
+    const t = {
+      "Alcohol": rnd() < (weekend ? .32 : .07), "Late meal": rnd() < .2, "Caffeine after 2pm": rnd() < .24, "Late workout": rnd() < .14,
+      "Late screens": rnd() < .3, "Stress": rnd() < .17, "Travel": rnd() < .03, "Unwell": rnd() < .025 };
+    const on = Object.keys(t).filter(x => t[x]);
+    if (on.length) tags.byDate[date] = {tags:on, note:""};
+    const bedMin = 23*60 + 5 + gauss()*24 + (weekend ? 50 : 0) + (t.Travel ? 70 : 0);
+    const startUtc = parseYmd(bedDay).getTime() + bedMin*60000 - OFF*60000;
+    let cur = startUtc; const stages = [], short = [], oob = [];
+    const push = (c, m) => { const e = cur + Math.round(m*60)*1000; stages.push([c, cur, e]); cur = e; };
+    push("W", R(5,15) + (t["Caffeine after 2pm"] ? 9 : 0) + (t.Stress ? 6 : 0));
+    const budget = (7.1 + gauss()*0.35 + (weekend ? .45 : 0) - (t.Alcohol ? .25 : 0) + (t.Unwell ? .5 : 0)) * 60;
+    let slept = 0, cyc = 0;
+    while (slept < budget) {
+      const deepF = t.Alcohol && cyc < 2 ? 1.15 : (t["Late workout"] ? .9 : 1);
+      const seq = [["L", R(18,34)], ["D", (cyc===0 ? R(30,48) : cyc===1 ? R(22,38) : cyc===2 ? R(6,16) : R(0,7))*deepF], ["L", R(8,16)], ["R", cyc===0 ? R(5,12)*(t.Alcohol?.4:1) : R(16,34)*(t.Alcohol && cyc<3 ? .6 : 1)]];
+      for (const [c, m] of seq) { if (m < 1) continue; const mm = Math.min(m, budget - slept + 5); push(c, mm); slept += mm; if (slept >= budget) break; }
+      if (slept >= budget) break;
+      const pFull = .08 + (t.Alcohol ? .14 : 0) + (t.Stress ? .08 : 0) + (t["Late meal"] ? .05 : 0) + (t.Unwell ? .15 : 0);
+      if (rnd() < pFull) { const m = R(6,16); const s = cur; push("W", m); if (rnd() < .55) { const a = s + R(1,3)*60000; oob.push([a, a + R(3,6)*60000]); } }
+      else if (rnd() < .4) push("W", R(1,2.8));
+      cyc++;
+    }
+    push("W", R(3,12));
+    const endUtc = cur;
+    // short awakenings sit inside light/REM sleep
+    const nShort = Math.max(2, Math.round(7 + R(0,5) + (t.Alcohol?5:0) + (t["Late meal"]?3:0) + (t["Caffeine after 2pm"]?2:0) + (t.Stress?2:0) + (t["Late workout"]?1:0) + (t.Unwell?3:0) + (t["Late screens"]?1:0)));
+    const cand = stages.filter(s => (s[0]==="L"||s[0]==="R") && s[2]-s[1] > 4*60000);
+    for (let i = 0; i < nShort && cand.length; i++) { const s = cand[Math.floor(rnd()*cand.length)]; const a = s[1] + rnd()*(s[2]-s[1]-150000); short.push([a, a + R(30,150)*1000]); }
+    short.sort((a,b)=>a[0]-b[0]);
+    const asleep = stages.filter(s => SLEEP_CODES.has(s[0])).reduce((x,s)=>x+(s[2]-s[1])/60000,0);
+    const awake = stages.filter(s => s[0]==="W").reduce((x,s)=>x+(s[2]-s[1])/60000,0);
+    const n = {id:`sample-${date}`, date, start:startUtc, end:endUtc, offsetMin:OFF, type:"STAGES", main:true, nap:false, edited:false, processed:true, device:"Sample Fitbit Air", stages, short, oob,
+      sum:{asleep:Math.round(asleep), awake:Math.round(awake), period:Math.round((endUtc-startUtc)/60000), toFall:Math.round((stages[0][2]-stages[0][1])/60000), afterWake:Math.round((stages[stages.length-1][2]-stages[stages.length-1][1])/60000)}, src:"sample"};
+    nights.push(n);
+    const base = 55.5 + (t.Alcohol?5:0) + (t.Unwell?6:0) + (t.Stress?2:0) + gauss()*1.2;
+    if (k !== 23) { // one night without heart-rate data
+      const pts = []; let drift = 0;
+      for (let m = startUtc; m < endUtc; m += 60000) {
+        const frac = (m - startUtc)/(endUtc - startUtc); drift = frac < .55 ? -6*frac/.55 : -6 + 3*(frac-.55)/.45;
+        const sAt = stages.find(s => m >= s[1] && m < s[2])?.[0] ?? "L";
+        let v = base + drift + ({D:-3.5, L:0, R:2.5 + rnd()*2.5, W:9}[sAt] ?? 0) + gauss()*1.1;
+        if (short.some(s => m >= s[0]-30000 && m <= s[1]+30000)) v += R(5,11);
+        pts.push([m, Math.round(v)]);
+      }
+      hr.set(date, pts);
+    }
+    daily[date] = {
+      rhr: Math.round(base - 4 + gauss()*.8), hrv: Math.round(51 - (t.Alcohol?10:0) - (t.Stress?5:0) - (t.Unwell?8:0) - (t["Late workout"]?3:0) + gauss()*4.5),
+      spo2: round1(96.4 + gauss()*.45 - (t.Unwell?.5:0)), resp: round1(14.2 + gauss()*.35 + (t.Unwell?.8:0) + (t.Alcohol?.4:0)),
+      tempDelta: Math.round((gauss()*.14 + (t.Unwell?.7:0) + (t.Alcohol?.2:0))*100)/100,
+    };
+  }
+  return {nights, daily, tags, hr};
+}
+
+
+/**
+ * Turns Google Health API data points (and legacy Fitbit Takeout sleep logs) into the
+ * compact shape the page renders. Field names follow the v4 reference:
+ * https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints
+ * The night-of / main-sleep rules follow Wristside's parseSleep (MIT, see THIRD_PARTY_NOTICES.md).
+ */
+
+const offsetSec = (o) => (o ? parseFloat(String(o)) || 0 : 0);
+
+function civilDate(d) {
+  if (!d || !d.year || !d.month || !d.day) return null;
+  return `${d.year}-${String(d.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`;
+}
+
+/** Local calendar date of a UTC timestamp, given the API's "<seconds>s" UTC offset. */
+function localDate(utcIso, offset) {
+  const shifted = new Date(Date.parse(utcIso) + offsetSec(offset) * 1000);
+  return shifted.toISOString().slice(0, 10);
+}
+
+const STAGE_CODE = { DEEP: "D", LIGHT: "L", REM: "R", AWAKE: "W", ASLEEP: "A", RESTLESS: "X" };
+const num = (v) => (v === undefined || v === null || v === "" ? null : Number(v));
+const ms = (iso) => Date.parse(iso);
+
+/** One API sleep data point -> normalized night, or null for naps / malformed points. */
+function normalizeSleepPoint(p) {
+  const s = p?.sleep;
+  const start = s?.interval?.startTime;
+  const end = s?.interval?.endTime;
+  if (!s || !start || !end) return null;
+  const date = civilDate(s.interval.civilEndTime?.date) ?? localDate(end, s.interval.endUtcOffset);
+  const stages = (s.stages ?? [])
+    .filter((x) => x.type && STAGE_CODE[x.type] && x.startTime && x.endTime)
+    .map((x) => [STAGE_CODE[x.type], ms(x.startTime), ms(x.endTime)])
+    .sort((a, b) => a[1] - b[1]);
+  const span = (arr) => (arr ?? []).filter((x) => x.startTime && x.endTime).map((x) => [ms(x.startTime), ms(x.endTime)]).sort((a, b) => a[0] - b[0]);
+  const sum = s.summary ?? {};
+  return {
+    id: p.name ?? `${date}-${start}`,
+    date,
+    start: ms(start),
+    end: ms(end),
+    offsetMin: Math.round(offsetSec(s.interval.endUtcOffset ?? s.interval.startUtcOffset) / 60),
+    type: s.type === "CLASSIC" ? "CLASSIC" : "STAGES",
+    main: Boolean(s.metadata?.mainSleep),
+    nap: Boolean(s.metadata?.nap),
+    edited: Boolean(s.metadata?.manuallyEdited),
+    processed: s.metadata?.processed !== false,
+    stagesStatus: s.metadata?.stagesStatus ?? null,
+    device: p.dataSource?.device?.displayName ?? null,
+    stages,
+    short: span(s.shortAwakenings),
+    oob: span(s.outOfBedSegments),
+    sum: {
+      asleep: num(sum.minutesAsleep),
+      awake: num(sum.minutesAwake),
+      period: num(sum.minutesInSleepPeriod),
+      toFall: num(sum.minutesToFallAsleep),
+      afterWake: num(sum.minutesAfterWakeUp),
+    },
+    src: "api",
+  };
+}
+
+/** Keep one main sleep per wake date (mainSleep flag, else the longest). Naps are dropped. */
+function pickMain(nights) {
+  const byDate = new Map();
+  for (const n of nights) {
+    if (!n || n.nap) continue;
+    const cur = byDate.get(n.date);
+    const len = (x) => x.sum.asleep ?? (x.end - x.start) / 60000;
+    if (!cur || (n.main && !cur.main) || (n.main === cur.main && len(n) > len(cur))) byDate.set(n.date, n);
+  }
+  return byDate;
+}
+
+/** Daily data types -> { date: { ...fields } } using the documented field names. */
+function parseDaily(type, points) {
+  const out = {};
+  for (const p of points) {
+    let date, v;
+    switch (type) {
+      case "daily-resting-heart-rate":
+        date = civilDate(p.dailyRestingHeartRate?.date);
+        v = { rhr: num(p.dailyRestingHeartRate?.beatsPerMinute) };
+        break;
+      case "daily-heart-rate-variability": {
+        const d = p.dailyHeartRateVariability;
+        date = civilDate(d?.date);
+        v = { hrv: num(d?.averageHeartRateVariabilityMilliseconds), hrvDeep: num(d?.deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds), nonRemHr: num(d?.nonRemHeartRateBeatsPerMinute) };
+        break;
+      }
+      case "daily-oxygen-saturation": {
+        const d = p.dailyOxygenSaturation;
+        date = civilDate(d?.date);
+        v = { spo2: num(d?.averagePercentage), spo2Lo: num(d?.lowerBoundPercentage), spo2Hi: num(d?.upperBoundPercentage) };
+        break;
+      }
+      case "daily-respiratory-rate":
+        date = civilDate(p.dailyRespiratoryRate?.date);
+        v = { resp: num(p.dailyRespiratoryRate?.breathsPerMinute) };
+        break;
+      case "daily-sleep-temperature-derivations": {
+        const d = p.dailySleepTemperatureDerivations;
+        date = civilDate(d?.date);
+        const nightly = num(d?.nightlyTemperatureCelsius);
+        const base = num(d?.baselineTemperatureCelsius);
+        v = { temp: nightly, tempBase: base, tempDelta: nightly !== null && base !== null ? Math.round((nightly - base) * 100) / 100 : null };
+        break;
+      }
+      default:
+        continue;
+    }
+    if (!date) continue;
+    for (const k of Object.keys(v)) if (v[k] === null) delete v[k];
+    out[date] = { ...(out[date] ?? {}), ...v };
+  }
+  return out;
+}
+
+/** respiratory-rate-sleep-summary samples -> { date: { respDeep, respLight, respRem, respFull } }. */
+function parseRespSummary(points) {
+  const out = {};
+  for (const p of points) {
+    const r = p.respiratoryRateSleepSummary;
+    const t = r?.sampleTime;
+    if (!r || !t?.physicalTime) continue;
+    const date = civilDate(t.civilTime?.date) ?? localDate(t.physicalTime, t.utcOffset);
+    out[date] = {
+      respFull: num(r.fullSleepStats?.breathsPerMinute),
+      respDeep: num(r.deepSleepStats?.breathsPerMinute),
+      respLight: num(r.lightSleepStats?.breathsPerMinute),
+      respRem: num(r.remSleepStats?.breathsPerMinute),
+    };
+  }
+  return out;
+}
+
+/** heart-rate samples -> [[minuteStartMs, medianBpm], ...] sorted, one point per minute. */
+function parseHeartRate(points) {
+  const perMin = new Map();
+  for (const p of points) {
+    const h = p.heartRate;
+    const t = ms(h?.sampleTime?.physicalTime);
+    const bpm = num(h?.beatsPerMinute);
+    if (!Number.isFinite(t) || !bpm) continue;
+    const m = Math.floor(t / 60000) * 60000;
+    if (!perMin.has(m)) perMin.set(m, []);
+    perMin.get(m).push(bpm);
+  }
+  return [...perMin.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([m, v]) => { v.sort((a, b) => a - b); return [m, v[Math.floor(v.length / 2)]]; });
+}
+
+// ---------- Legacy Fitbit export (Takeout "sleep-YYYY-MM-DD.json") ----------
+const LEGACY_CODE = { deep: "D", light: "L", rem: "R", wake: "W", awake: "W", asleep: "A", restless: "X" };
+
+/** Legacy local timestamps have no offset; read them as this laptop's local time. */
+const legacyMs = (s) => new Date(String(s).replace(/Z$/, "")).getTime();
+
+function normalizeLegacyLog(log) {
+  if (!log?.startTime || !log?.endTime) return null;
+  const lv = log.levels ?? {};
+  const stages = (lv.data ?? [])
+    .filter((x) => LEGACY_CODE[x.level])
+    .map((x) => { const s = legacyMs(x.dateTime); return [LEGACY_CODE[x.level], s, s + Number(x.seconds) * 1000]; })
+    .sort((a, b) => a[1] - b[1]);
+  const short = (lv.shortData ?? [])
+    .map((x) => { const s = legacyMs(x.dateTime); return [s, s + Number(x.seconds) * 1000]; })
+    .sort((a, b) => a[0] - b[0]);
+  const start = legacyMs(log.startTime);
+  return {
+    id: `takeout-${log.logId ?? log.startTime}`,
+    date: log.dateOfSleep ?? new Date(legacyMs(log.endTime)).toISOString().slice(0, 10),
+    start,
+    end: legacyMs(log.endTime),
+    offsetMin: -new Date(start).getTimezoneOffset(),
+    type: log.type === "classic" ? "CLASSIC" : "STAGES",
+    main: Boolean(log.mainSleep ?? log.isMainSleep),
+    nap: false,
+    edited: false,
+    processed: true,
+    stagesStatus: null,
+    device: null,
+    stages,
+    short,
+    oob: [],
+    sum: {
+      asleep: num(log.minutesAsleep),
+      awake: num(log.minutesAwake),
+      period: num(log.timeInBed),
+      toFall: num(log.minutesToFallAsleep),
+      afterWake: num(log.minutesAfterWakeup),
+    },
+    src: "takeout",
+  };
+}
+
+
+const APP_VERSION = "1.0.0";
+const SCOPES = ["https://www.googleapis.com/auth/googlehealth.sleep.readonly", "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"];
+const API = "https://health.googleapis.com/v4/users/me/dataTypes";
+const TOKEN_URL = "https://oauth2.googleapis.com/token";
+const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+const DAILY_TYPES = {"daily-resting-heart-rate":"daily_resting_heart_rate","daily-heart-rate-variability":"daily_heart_rate_variability","daily-oxygen-saturation":"daily_oxygen_saturation","daily-respiratory-rate":"daily_respiratory_rate","daily-sleep-temperature-derivations":"daily_sleep_temperature_derivations"};
+const REDIRECT = location.origin + location.pathname;
+const SHOWN_ORIGIN = location.protocol === "file:" ? "https://<your-github-name>.github.io" : location.origin;
+const SHOWN_REDIRECT = location.protocol === "file:" ? "https://<your-github-name>.github.io/sleep/" : REDIRECT;
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+/* ---------------- storage (IndexedDB, falls back to memory) ---------------- */
+const DB = (() => {
+  let dbp = null;
+  const open = () => dbp ||= new Promise((res, rej) => { const r = indexedDB.open("sleep", 1); r.onupgradeneeded = () => r.result.createObjectStore("kv"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  const tx = async (mode, fn) => { const db = await open(); return new Promise((res, rej) => { const t = db.transaction("kv", mode); const st = t.objectStore("kv"); const out = fn(st); t.oncomplete = () => res(out?.result); t.onerror = () => rej(t.error); }); };
+  return { get: (k) => tx("readonly", st => st.get(k)), set: (k, v) => tx("readwrite", st => st.put(v, k)), del: (k) => tx("readwrite", st => st.delete(k)) };
+})();
+const LS = { get: (k, d = null) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }, set: (k, v) => localStorage.setItem(k, JSON.stringify(v)), del: (k) => localStorage.removeItem(k) };
+
+/* ---------------- state ---------------- */
+const S = { mode:"sample", nights:[], byDate:new Map(), daily:{}, tags:{byDate:{}, custom:[]}, hr:new Map(), metrics:new Map(), date:null, tab:"night", range:30, showHr:true, sync:{running:false, step:"", done:0, total:0, error:null, log:LS.get("syncLog", [])}, target:LS.get("target", 8) };
+const M = (date) => { if (!S.metrics.has(date)) { const n = S.byDate.get(date); S.metrics.set(date, n ? computeMetrics(n) : null); } return S.metrics.get(date); };
+function baseline(date, pick, nN = 30) {
+  const prior = S.nights.filter(n => n.date < date).slice(-nN).map(n => pick(M(n.date), S.daily[n.date] || {}, n)).filter(v => v != null && isFinite(v));
+  if (prior.length < 7) return null;
+  return { med: median(prior), p25: quant(prior, .25), p75: quant(prior, .75), n: prior.length };
+}
+function setData({nights, daily, tags, hr, mode}) {
+  S.nights = nights.slice().sort((a, b) => a.date.localeCompare(b.date));
+  S.byDate = new Map(S.nights.map(n => [n.date, n])); S.daily = daily || {}; S.tags = tags || {byDate:{}, custom:[]};
+  S.hr = hr || new Map(); S.metrics = new Map(); S.mode = mode;
+  if (!S.date || !S.byDate.has(S.date)) S.date = S.nights.length ? S.nights[S.nights.length - 1].date : null;
+}
+async function loadLocal() {
+  const nights = await DB.get("nights").catch(() => null);
+  if (nights && Object.keys(nights).length) {
+    setData({nights:Object.values(nights), daily:(await DB.get("daily")) || {}, tags:(await DB.get("tags")) || {byDate:{}, custom:[]}, mode:"live"});
+  } else {
+    const s = makeSample();
+    setData({...s, tags: LS.get("sampleTags", s.tags), mode:"sample"});
+  }
+}
+async function hrFor(date) {
+  if (S.hr.has(date)) return S.hr.get(date);
+  if (S.mode !== "live") return [];
+  let hr = await DB.get("hr:" + date).catch(() => null);
+  if (!hr && connected() && S.byDate.get(date)?.src === "api") { try { hr = await fetchHr(await token(), S.byDate.get(date)); } catch { hr = []; } }
+  S.hr.set(date, hr || []); return hr || [];
+}
+
+/* ---------------- Google sign-in (code + PKCE, all on this device) ---------------- */
+const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const b64uStr = (s) => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const unb64uStr = (s) => decodeURIComponent(escape(atob(s.replace(/-/g, "+").replace(/_/g, "/"))));
+const client = () => LS.get("client");
+const tokens = () => LS.get("tokens");
+const connected = () => Boolean(client() && tokens()?.refreshToken);
+async function signIn() {
+  const c = client(); if (!c) return;
+  const verifier = b64u(crypto.getRandomValues(new Uint8Array(48)));
+  const challenge = b64u(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
+  const nonce = b64u(crypto.getRandomValues(new Uint8Array(12)));
+  LS.set("pending", {verifier, nonce, at: Date.now()});
+  // The state carries the verifier too, so the sign-in still completes if iOS returns to a different window.
+  const state = b64uStr(JSON.stringify({v: verifier, n: nonce}));
+  const p = new URLSearchParams({client_id:c.id, redirect_uri:REDIRECT, response_type:"code", scope:SCOPES.join(" "), access_type:"offline", prompt:"consent", include_granted_scopes:"true", state, code_challenge:challenge, code_challenge_method:"S256"});
+  location.assign(`${AUTH_URL}?${p}`);
+}
+async function tokenReq(body) {
+  const c = client();
+  const r = await fetch(TOKEN_URL, {method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body:new URLSearchParams({client_id:c.id, client_secret:c.secret, ...body})});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(j.error_description || j.error || `Sign-in error ${r.status}`); e.code = j.error; throw e; }
+  return j;
+}
+async function exchange(code, verifier) {
+  const t = await tokenReq({code, grant_type:"authorization_code", redirect_uri:REDIRECT, code_verifier:verifier});
+  LS.set("tokens", {access:t.access_token, refreshToken:t.refresh_token, exp:Date.now() + (t.expires_in || 3600) * 1000, at:new Date().toISOString()});
+  LS.del("pending");
+}
+async function token() {
+  const t = tokens(); if (!t?.refreshToken) throw Object.assign(new Error("Not signed in"), {status:401});
+  if (t.access && t.exp - Date.now() > 60000) return t.access;
+  const r = await tokenReq({refresh_token:t.refreshToken, grant_type:"refresh_token"});
+  t.access = r.access_token; t.exp = Date.now() + (r.expires_in || 3600) * 1000; if (r.refresh_token) t.refreshToken = r.refresh_token;
+  LS.set("tokens", t); return t.access;
+}
+async function handleRedirect() {
+  const q = new URLSearchParams(location.search);
+  if (!q.has("code") && !q.has("error")) return null;
+  history.replaceState(null, "", location.pathname + "#you");
+  if (q.get("error")) return {error: q.get("error") === "access_denied" ? "You cancelled the Google sign-in." : q.get("error")};
+  let st; try { st = JSON.parse(unb64uStr(q.get("state") || "")); } catch { return {error:"The sign-in reply was not understood. Try again."}; }
+  const code = q.get("code");
+  if (!client()) return {handoff: b64uStr(JSON.stringify({c: code, v: st.v}))}; // landed in a window without your settings
+  try { await exchange(code, st.v); return {signedIn:true}; } catch (e) { return {error:e.message}; }
+}
+
+/* ---------------- Google Health API (read-only) ---------------- */
+async function call(tok, url) {
+  for (let a = 0; ; a++) {
+    const r = await fetch(url, {headers:{Authorization:`Bearer ${tok}`}});
+    if (r.ok) return r.json();
+    if ((r.status === 429 || r.status >= 500) && a < 3) { await new Promise(res => setTimeout(res, (r.status === 429 ? 4000 : 600) * 2 ** a)); continue; }
+    let msg = `${r.status}`; try { msg = (await r.json()).error?.message || msg; } catch {}
+    throw Object.assign(new Error(msg), {status:r.status});
+  }
+}
+async function list(tok, type, filter, maxPages = 40) {
+  const out = []; let pt; let pages = 0;
+  do { const p = new URLSearchParams({filter, pageSize:String(type === "sleep" ? 25 : 10000)}); if (pt) p.set("pageToken", pt); const r = await call(tok, `${API}/${type}/dataPoints?${p}`); out.push(...(r.dataPoints || [])); pt = r.nextPageToken || null; pages++; } while (pt && pages < maxPages);
+  return out;
+}
+const todayLocal = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+const chunks = (from, to, size) => { const o = []; for (let a = from; a < to; a = addDays(a, size)) { const b = addDays(a, size); o.push([a, b < to ? b : to]); } return o; };
+async function fetchHr(tok, n) {
+  const f = new Date(n.start - 30 * 60000).toISOString(), t = new Date(n.end + 30 * 60000).toISOString();
+  const pts = await list(tok, "heart-rate", `heart_rate.sample_time.physical_time >= "${f}" AND heart_rate.sample_time.physical_time < "${t}"`, 10);
+  const hr = parseHeartRate(pts); await DB.set("hr:" + n.date, hr); return hr;
+}
+async function sync({history = false} = {}) {
+  if (S.sync.running) return;
+  S.sync = {running:true, step:"Starting", done:0, total:0, error:null, log:[]}; paint();
+  const log = (section, ok, detail) => S.sync.log.push({section, ok, detail});
+  try {
+    const tok = await token();
+    const nights = (await DB.get("nights")) || {}, daily = (await DB.get("daily")) || {};
+    const t = todayLocal(), end = addDays(t, 1), last = LS.get("lastSyncDate");
+    const earliest = Object.keys(nights).sort()[0];
+    const from = history ? addDays(earliest || t, -365) : last ? addDays(last, -3) : addDays(t, -365);
+    const to = history ? (earliest || end) : end;
+    S.sync.step = "Sleep"; paint();
+    let n = 0;
+    for (const [a, b] of chunks(from, to, 30)) {
+      const pts = await list(tok, "sleep", `sleep.interval.civil_end_time >= "${a}" AND sleep.interval.civil_end_time < "${b}"`);
+      for (const [date, night] of pickMain(pts.map(normalizeSleepPoint).filter(Boolean))) { nights[date] = night; n++; }
+    }
+    log("Sleep", true, `${n} nights`);
+    for (const [type, snake] of Object.entries(DAILY_TYPES)) {
+      S.sync.step = type.replace("daily-", "").replace(/-/g, " "); paint();
+      try { let k = 0; for (const [a, b] of chunks(from, to, 90)) { const parsed = parseDaily(type, await list(tok, type, `${snake}.date >= "${a}" AND ${snake}.date < "${b}"`)); for (const [d, v] of Object.entries(parsed)) { daily[d] = {...(daily[d] || {}), ...v}; k++; } } log(type, true, `${k} days`); }
+      catch (e) { log(type, false, e.message); }
+    }
+    try { let k = 0; for (const [a, b] of chunks(from, to, 90)) { for (const [d, v] of Object.entries(parseRespSummary(await list(tok, "respiratory-rate-sleep-summary", `respiratory_rate_sleep_summary.sample_time.civil_time >= "${a}" AND respiratory_rate_sleep_summary.sample_time.civil_time < "${b}"`)))) { daily[d] = {...(daily[d] || {}), ...v}; k++; } } log("Breathing per stage", true, `${k} nights`); }
+    catch (e) { log("Breathing per stage", false, e.message); }
+    await DB.set("nights", nights); await DB.set("daily", daily);
+    const need = Object.values(nights).filter(x => x.date >= addDays(t, -60) && (x.date >= from));
+    S.sync.step = "Heart rate"; S.sync.total = need.length; paint();
+    let ok = 0, bad = 0;
+    for (const x of need) { try { await fetchHr(tok, x); ok++; } catch { bad++; } S.sync.done++; if (S.sync.done % 5 === 0) paint(); }
+    log("Heart rate", bad === 0, `${ok} nights${bad ? `, ${bad} failed` : ""}`);
+    if (!history) LS.set("lastSyncDate", t);
+    LS.set("lastSyncAt", new Date().toISOString());
+    const tags = (await DB.get("tags")) || (S.mode === "sample" ? {byDate:{}, custom:[]} : S.tags);
+    await DB.set("tags", tags);
+    S.date = null; setData({nights:Object.values(nights), daily, tags, mode:"live"});
+  } catch (e) {
+    S.sync.error = e.code === "invalid_grant" || e.status === 401 ? "Google's sign-in has expired. Tap Sign in with Google again." : e.message;
+    log("Sync", false, S.sync.error);
+  } finally {
+    S.sync.running = false; LS.set("syncLog", S.sync.log); paint();
+  }
+}
+
+/* ---------------- small UI helpers ---------------- */
+const bubble = $("#bubble"); let bubbleT;
+function showBubble(html, x, y) { clearTimeout(bubbleT); bubble.innerHTML = html; bubble.style.opacity = 1; const r = bubble.getBoundingClientRect(); let L = Math.min(innerWidth - r.width - 8, Math.max(8, x - r.width / 2)), T = y - r.height - 18; if (T < 8) T = y + 22; bubble.style.left = L + "px"; bubble.style.top = T + "px"; }
+function hideBubble(delay = 1200) { clearTimeout(bubbleT); bubbleT = setTimeout(() => bubble.style.opacity = 0, delay); }
+function pointer(el, onMove, onEnd) {
+  const get = (e) => e.touches ? e.touches[0] : e;
+  el.addEventListener("pointerdown", (e) => { el.setPointerCapture?.(e.pointerId); onMove(get(e)); });
+  el.addEventListener("pointermove", (e) => { if (e.pointerType === "mouse" || e.buttons || e.pressure) onMove(get(e)); });
+  el.addEventListener("pointerup", () => onEnd()); el.addEventListener("pointercancel", () => onEnd()); el.addEventListener("pointerleave", () => onEnd());
+}
+const greet = () => { const h = new Date().getHours(); return h < 12 ? "Good morning." : h < 18 ? "Good afternoon." : "Good evening."; };
+const cardW = () => Math.min(484, document.querySelector(".app").clientWidth - 36) - 36;
+
+/* ---------------- NIGHT ---------------- */
+function nightInsight(n, m, b) {
+  const parts = [];
+  if (b) parts.push(m.count > b.p75 ? `More wake-ups than usual (${Math.round(b.p25)}–${Math.round(b.p75)}).` : m.count < b.p25 ? `Fewer wake-ups than usual (${Math.round(b.p25)}–${Math.round(b.p75)}).` : `Within your usual ${Math.round(b.p25)}–${Math.round(b.p75)}.`);
+  const long = m.events.filter(e => e.kind === "full");
+  if (long.length === 1) parts.push(`One long wake at ${clock(long[0].s, n.offsetMin)}${long[0].up ? ", when you got up" : ""}.`);
+  else if (long.length > 1) parts.push(`${long.length} long wakes, the first at ${clock(long[0].s, n.offsetMin)}.`);
+  parts.push(`You slept ${dur(m.asleep)}${m.asleep < S.target * 60 - 30 ? `, ${dur(S.target * 60 - m.asleep)} short of your ${S.target}h target` : ""}.`);
+  return parts.join(" ");
+}
+function hypnogram(n, m, hr, w) {
+  const PIN = 22, LH = 22, GAP = 5, LAN = 4 * LH + 3 * GAP, HRG = S.showHr && hr.length > 5 ? 74 : 0, AX = 18, H = PIN + LAN + (HRG ? 14 + HRG : 0) + AX, L = 44, PW = w - L;
+  const t0 = n.start, t1 = n.end, x = (t) => L + (t - t0) / (t1 - t0) * PW, ly = (l) => PIN + l * (LH + GAP), off = n.offsetMin;
+  const laneOf = {W:0, R:1, L:2, D:3, A:2, X:0}, color = {W:"#e2603f", R:"#a9a3ee", L:"#5b6fd6", D:"#283a7a", A:"#5b6fd6", X:"#e2603f"};
+  const names = m.classic ? ["Awake", "", "Asleep", ""] : ["Awake", "REM", "Light", "Deep"];
+  let s = `<svg width="${w}" height="${H}" viewBox="0 0 ${w} ${H}" role="img" aria-label="Night timeline with ${m.count} disturbances"><defs><pattern id="up" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="#e2603f" opacity=".55"/></pattern></defs>`;
+  names.forEach((t, l) => { if (!t) return; s += `<rect x="${L}" y="${ly(l)}" width="${PW}" height="${LH}" rx="7" fill="#f6f1ea"/><text x="0" y="${ly(l) + LH / 2 + 4.5}" font-size="12" fill="#8a8177">${t}</text>`; });
+  const first = Math.ceil((t0 + off * 60000) / 3600000) * 3600000 - off * 60000;
+  for (let t = first; t <= t1; t += 3600000) { const lbl = ((t + off * 60000) / 3600000) % 2 === 0; s += `<line x1="${x(t)}" x2="${x(t)}" y1="${PIN - 2}" y2="${H - AX}" stroke="#efe8de"/>` + (lbl ? `<text x="${Math.min(w, x(t))}" y="${H - 3}" font-size="11" text-anchor="${x(t) > w - 16 ? "end" : "middle"}" fill="#8a8177">${clock(t, off)}</text>` : ""); }
+  for (const o of n.oob || []) s += `<rect x="${x(o[0])}" y="${PIN - 3}" width="${Math.max(4, x(o[1]) - x(o[0]))}" height="${LAN + 6}" rx="3" fill="url(#up)"/>`;
+  const st = n.stages || [];
+  for (let i = 1; i < st.length; i++) { const a = laneOf[st[i - 1][0]], b = laneOf[st[i][0]]; if (a === b) continue; s += `<line x1="${x(st[i][1])}" x2="${x(st[i][1])}" y1="${ly(a) + LH / 2}" y2="${ly(b) + LH / 2}" stroke="#d7cdbf" stroke-width="1"/>`; }
+  for (const q of st) s += `<rect x="${x(q[1]).toFixed(1)}" y="${ly(laneOf[q[0]]) + 2}" width="${Math.max(1.5, x(q[2]) - x(q[1])).toFixed(1)}" height="${LH - 4}" rx="4" fill="${color[q[0]]}"/>`;
+  for (const q of n.short || []) s += `<rect x="${(x(q[0]) - 1).toFixed(1)}" y="${ly(0) + 5}" width="${Math.max(2.5, x(q[1]) - x(q[0])).toFixed(1)}" height="${LH - 10}" rx="1.2" fill="#e2603f"/>`;
+  let last = -99;
+  for (const e of m.events) { const px = x(e.s), y = px - last < 11 ? 5 : 13; last = px; s += e.kind === "full" ? `<circle cx="${px}" cy="${y}" r="6" fill="#e2603f"/>` : `<circle cx="${px}" cy="${y}" r="3.8" fill="#fff" stroke="#e2603f" stroke-width="2"/>`; }
+  if (HRG) {
+    const top = PIN + LAN + 14, pts = hr.filter(p => p[0] >= t0 && p[0] <= t1), v = pts.map(p => p[1]), lo = Math.floor(Math.min(...v) - 2), hi = Math.ceil(Math.max(...v) + 2), y = (b) => top + HRG - (b - lo) / (hi - lo) * HRG;
+    s += `<text x="0" y="${top + 9}" font-size="12" fill="#8a8177">Heart</text><text x="0" y="${top + 23}" font-size="11" fill="#8a8177">${lo}–${hi}</text>`;
+    let d = ""; pts.forEach((p, i) => { const brk = i && p[0] - pts[i - 1][0] > 10 * 60000; d += `${!i || brk ? "M" : "L"}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`; });
+    s += `<path d="${d}" fill="none" stroke="#c0574a" stroke-width="1.6" stroke-linejoin="round" opacity=".85"/>`;
+    const rhr = S.daily[n.date]?.rhr; if (rhr && rhr > lo && rhr < hi) s += `<line x1="${L}" x2="${w}" y1="${y(rhr)}" y2="${y(rhr)}" stroke="#5b6fd6" stroke-dasharray="3 4" opacity=".7"/>`;
+  }
+  s += `<line id="cross" x1="0" x2="0" y1="${PIN - 4}" y2="${H - AX}" stroke="#1f1b17" stroke-width="1.2" opacity="0"/>`;
+  return {svg: s + `</svg>`, x, L, PW, t0, t1};
+}
+function miniStrip(n) {
+  const idx = S.nights.findIndex(x => x.date === n.date), list = S.nights.slice(Math.max(0, idx - 13), idx + 1);
+  if (list.length < 3) return "";
+  const v = list.map(x => M(x.date).count), max = Math.max(...v, 1), w = cardW(), H = 46, gap = 5, bw = (w - gap * 13) / 14;
+  return `<div class="mini"><div class="cap"><span>Last ${list.length} nights</span><span class="num">${Math.min(...v)} to ${max}</span></div><svg width="${w}" height="${H}" viewBox="0 0 ${w} ${H}">${list.map((x, i) => { const h = Math.max(3, v[i] / max * H), X = (14 - list.length + i) * (bw + gap); return `<rect data-date="${x.date}" x="${X.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="4" fill="${x.date === n.date ? "#e2603f" : "#ece3d8"}"/>`; }).join("")}</svg></div>`;
+}
+const tile = (k, v, unit, d, color) => `<div class="tile"><div class="k">${color ? `<i style="background:${color}"></i>` : ""}${k}</div><div class="v num">${v}${unit ? `<small>${unit}</small>` : ""}</div><div class="d">${d || "&nbsp;"}</div></div>`;
+async function renderNight() {
+  const el = $("#s-night"), n = S.byDate.get(S.date);
+  if (!n) { el.innerHTML = `<div class="title">No nights yet</div><p class="lede">Connect Google Health in the You tab.</p>`; return; }
+  const m = M(n.date), d = S.daily[n.date] || {}, b = baseline(n.date, x => x?.count), latest = n.date === S.nights[S.nights.length - 1].date;
+  const vs = (cur, pick, fmt) => { const bb = baseline(n.date, pick); return bb && cur != null ? `${fmt(cur - bb.med)} vs usual` : ""; };
+  const fm = (x) => `${x > 0 ? "+" : x < 0 ? "−" : "±"}${dur(Math.abs(x))}`;
+  const pos = (v, lo, hi) => `${((v - lo) / (hi - lo) * 100).toFixed(1)}%`;
+  let range = "";
+  if (b) { const lo = Math.min(b.p25, m.count, b.med) - 4, hi = Math.max(b.p75, m.count, b.med) + 4; range = `<div class="rangebar"><div class="tr"></div><div class="band" style="left:${pos(b.p25, lo, hi)};width:calc(${pos(b.p75, lo, hi)} - ${pos(b.p25, lo, hi)})"></div><div class="med" style="left:${pos(b.med, lo, hi)}"></div><div class="me" style="left:${pos(m.count, lo, hi)}"></div></div><div class="rangecap"><span>Fewer</span><span>Your usual range</span><span>More</span></div>`; }
+  const sampleBanner = S.mode === "sample" ? `<div class="banner"><span>⚠</span><span><b>Sample data.</b> These nights are made up to show the design. Connect Google Health in <a href="#you">You</a> to see yours.</span></div>` : "";
+  el.innerHTML = `${sampleBanner}
+    <div class="title">${latest ? greet() + "<br>" : ""}<em class="num">${m.count} wake-ups</em> ${latest ? "last night." : "this night."}</div>
+    <p class="lede">${nightInsight(n, m, b)}</p>
+    <div class="card hero">
+      <div class="row"><div><div class="k">Disturbances</div><div class="big num">${m.count}</div></div><div class="usual"><span>Your usual</span><b class="num">${b ? `${Math.round(b.p25)}–${Math.round(b.p75)}` : "–"}</b><span>${m.perHour != null ? `${m.perHour.toFixed(1)} an hour asleep` : ""}</span></div></div>
+      ${range}
+      <div class="chips"><span><b>${m.brief}</b> brief</span><span><b>${m.shortN}</b> short</span><span><b>${m.full}</b> long</span><span><b>${m.up}</b> out of bed</span></div>
+      ${miniStrip(n)}
+      <details class="how"><summary>How wake-ups are counted</summary><p>Every wake between falling asleep and your final wake: each short awakening Google Health records and each awake period, counted once if they are less than a minute apart. Brief is under 3 minutes, short 3 to 5, long over 5 (the only kind Google's own sleep score counts). Wrist trackers miss some real wake time, so read it as a trend.</p></details>
+    </div>
+    <div class="tiles">
+      ${tile("Asleep", dur(m.asleep), "", m.eff != null ? `${Math.round(m.eff * 100)}% of time in bed` : "")}
+      ${tile("Sleep window", `${clock(m.onset, n.offsetMin)}`, `– ${clock(m.finalWake, n.offsetMin)}`, `fell asleep after ${dur(m.latency)}`)}
+      ${tile("Deep", dur(m.deep), "", vs(m.deep, x => x?.deep, fm), "var(--deep)")}
+      ${tile("REM", dur(m.rem), "", vs(m.rem, x => x?.rem, fm), "var(--rem)")}
+      ${tile("Resting heart rate", d.rhr ?? "–", d.rhr != null ? "bpm" : "", vs(d.rhr, (x, dd) => dd.rhr, v => signed(v, 0, " bpm")))}
+      ${tile("Heart rate variability", d.hrv != null ? Math.round(d.hrv) : "–", d.hrv != null ? "ms" : "", vs(d.hrv, (x, dd) => dd.hrv, v => signed(v, 0, " ms")))}
+      ${tile("Breathing", (d.resp ?? d.respFull) ?? "–", (d.resp ?? d.respFull) != null ? "/min" : "", vs(d.resp ?? d.respFull, (x, dd) => dd.resp ?? dd.respFull, v => signed(v, 1, "")))}
+      ${tile("Blood oxygen", d.spo2 != null ? d.spo2.toFixed(1) : "–", d.spo2 != null ? "%" : "", d.tempDelta != null ? `skin temp ${signed(d.tempDelta, 1, "°C")}` : "")}
+    </div>
+    <div class="card"><div class="card-head"><div><h2>Your night</h2><div class="sub">Touch and slide to see any minute</div></div><button class="toggle" id="hrTog" aria-pressed="${S.showHr}">Heart</button></div><div class="tl" id="tl"></div>
+      <div class="legend"><span><i style="background:var(--deep)"></i>Deep</span><span><i style="background:var(--light)"></i>Light</span><span><i style="background:var(--rem)"></i>REM</span><span><i style="background:var(--awake)"></i>Awake</span><span><i class="pin"></i>Wake-up</span><span><i class="up"></i>Out of bed</span></div></div>
+    <div class="card"><div class="card-head"><div><h2>Every wake-up</h2><div class="sub">${m.count} between ${clock(m.onset, n.offsetMin)} and ${clock(m.finalWake, n.offsetMin)}</div></div></div><div id="wakes"></div></div>`;
+  el.querySelectorAll(".mini rect").forEach(r => r.onclick = () => go("night", r.dataset.date));
+  $("#hrTog").onclick = () => { S.showHr = !S.showHr; renderNight(); };
+  renderWakes(n, m);
+  const hr = await hrFor(n.date); if (S.date !== n.date || S.tab !== "night") return;
+  const box = $("#tl"), g = hypnogram(n, m, hr, cardW());
+  box.innerHTML = g.svg;
+  const svg = box.querySelector("svg"), cross = svg.querySelector("#cross"), st = n.stages || [];
+  pointer(svg, (e) => {
+    const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) * (svg.viewBox.baseVal.width / r.width); if (px < g.L) return;
+    const t = g.t0 + (px - g.L) / g.PW * (g.t1 - g.t0); cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("opacity", .5);
+    const s = st.find(q => t >= q[1] && t < q[2]), ev = m.events.find(q => t >= q.s - 60000 && t <= q.e + 60000);
+    let h = null, best = 1e12; for (const p of hr) { const dd = Math.abs(p[0] - t); if (dd < best) { best = dd; h = p; } }
+    showBubble(`<b class="num">${clock(t, n.offsetMin)}</b> · ${s ? STAGE[s[0]].name : "In bed"}${h && best < 5 * 60000 ? `<br>Heart ${h[1]} bpm` : ""}${ev ? `<br>Wake-up ${ev.i}: ${durShort(ev.min)}${ev.up ? ", out of bed" : ""}` : ""}`, e.clientX, r.top + 10);
+  }, () => { cross.setAttribute("opacity", 0); hideBubble(900); });
+}
+let wakesAll = false;
+function renderWakes(n, m) {
+  const box = $("#wakes"); if (!m.events.length) { box.innerHTML = `<div class="empty">No wake-ups recorded.</div>`; return; }
+  const kind = {brief:"Brief wake", short:"Short wake", full:"Long wake"}, list = wakesAll ? m.events : m.events.slice(0, 6);
+  box.innerHTML = list.map(e => `<div class="wake"><span class="dot ${e.kind === "full" ? "full" : ""}"></span><span class="t num">${clock(e.s, n.offsetMin)}</span><span class="w">${kind[e.kind]}${e.before ? ` from ${STAGE[e.before].name.toLowerCase()}` : ""}${e.up ? `<span class="badge">Got up</span>` : ""}</span><span class="l num">${durShort(e.min)}</span></div>`).join("") + (m.events.length > 6 ? `<button class="more" id="moreW">${wakesAll ? "Show fewer" : `Show all ${m.events.length}`}</button>` : "");
+  const mb = $("#moreW"); if (mb) mb.onclick = () => { wakesAll = !wakesAll; renderWakes(n, m); };
+}
+/* ---------------- TRENDS ---------------- */
+const rangeNights = (days) => { if (!S.nights.length) return []; const last = S.nights[S.nights.length - 1].date, from = addDays(last, -(days - 1)); return S.nights.filter(n => n.date >= from); };
+const segHtml = (v, id) => `<div class="seg" id="${id}">${[[7, "7 nights"], [30, "30"], [90, "90"], [365, "Year"]].map(([k, l]) => `<button aria-pressed="${k === v}" data-v="${k}">${l}</button>`).join("")}</div>`;
+const xLabel = (i, n, cx, w, H, txt) => { const last = i === n - 1, x = last ? w : cx(i); return `<text x="${x}" y="${H - 4}" font-size="11" text-anchor="${last ? "end" : "middle"}" fill="#8a8177">${txt}</text>`; };
+function niceMax(v) { const steps = [2, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 80, 100]; return steps.find(s => s >= v) ?? Math.ceil(v / 50) * 50; }
+function bars(nights, {value, color, tip, max, band, ref, refLbl, yFmt = (v) => v, h = 150}) {
+  const w = cardW(), L = 30, PW = w - L, H = h, T = 8, B = 20, PH = H - T - B, vals = nights.map(value), n = nights.length;
+  const top = max ?? niceMax(Math.max(...vals.filter(v => v != null), ref || 0) * 1.08), y = (v) => T + PH - v / top * PH, bw = Math.max(2, Math.min(18, PW / n - (n > 60 ? 1 : 3))), cx = (i) => L + (i + .5) * PW / n;
+  let s = `<svg width="${w}" height="${H}" viewBox="0 0 ${w} ${H}" class="barsvg">`;
+  for (const f of [0, .5, 1]) s += `<line x1="${L}" x2="${w}" y1="${y(top * f)}" y2="${y(top * f)}" stroke="#efe8de"/><text x="0" y="${y(top * f) + 4}" font-size="11" fill="#8a8177">${yFmt(Math.round(top * f * 10) / 10)}</text>`;
+  if (band) { let d = "", d2 = ""; band.forEach((q, i) => { if (q) d += `${d && band[i - 1] ? "L" : "M"}${cx(i).toFixed(1)},${y(q[1]).toFixed(1)}`; }); for (let i = band.length - 1; i >= 0; i--) if (band[i]) d2 += `L${cx(i).toFixed(1)},${y(band[i][0]).toFixed(1)}`; if (d) s += `<path d="${d}${d2}Z" fill="#ede6f8"/>`; }
+  vals.forEach((v, i) => { if (v == null) return; const hh = Math.max(1, y(0) - y(v)), r = Math.min(4, bw / 2, hh); const x0 = cx(i) - bw / 2, y0 = y(v); s += `<path data-i="${i}" d="M${x0},${y(0)}V${y0 + r}Q${x0},${y0} ${x0 + r},${y0}H${x0 + bw - r}Q${x0 + bw},${y0} ${x0 + bw},${y0 + r}V${y(0)}Z" fill="${nights[i].date === S.date ? "#1f1b17" : color}"/>`; });
+  if (ref) s += `<line x1="${L}" x2="${w}" y1="${y(ref)}" y2="${y(ref)}" stroke="#1f1b17" stroke-dasharray="4 4" opacity=".5"/><text x="${w}" y="${y(ref) - 5}" font-size="11" text-anchor="end" fill="#5b5249">${refLbl}</text>`;
+  const every = Math.max(1, Math.ceil(n / 5)); nights.forEach((x, i) => { if ((n - 1 - i) % every) return; s += xLabel(i, n, cx, w, H, shortLabel(x.date)); });
+  return s + `</svg>`;
+}
+function lineChart(nights, {value, fmt, unit}) {
+  const w = cardW(), L = 30, PW = w - L, H = 120, T = 10, B = 20, PH = H - T - B, vals = nights.map(n => value(S.daily[n.date] || {})), v = vals.filter(x => x != null), n = nights.length;
+  if (v.length < 2) return `<div class="empty">Not enough readings yet.</div>`;
+  const lo0 = Math.min(...v), hi0 = Math.max(...v), padv = (hi0 - lo0) * .25 || 1, lo = lo0 - padv, hi = hi0 + padv, y = (q) => T + PH - (q - lo) / (hi - lo) * PH, cx = (i) => L + (i + .5) * PW / n, med = median(v);
+  let s = `<svg width="${w}" height="${H}" viewBox="0 0 ${w} ${H}" class="linesvg">`;
+  for (const q of [lo0, hi0]) s += `<text x="0" y="${y(q) + 4}" font-size="11" fill="#8a8177">${fmt(q)}</text>`;
+  s += `<line x1="${L}" x2="${w}" y1="${y(med)}" y2="${y(med)}" stroke="#1f1b17" stroke-dasharray="4 4" opacity=".35"/>`;
+  let d = ""; vals.forEach((q, i) => { if (q == null) return; d += `${d && vals[i - 1] != null ? "L" : "M"}${cx(i).toFixed(1)},${y(q).toFixed(1)}`; });
+  s += `<path d="${d}" fill="none" stroke="#5b6fd6" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  const li = vals.length - 1; if (vals[li] != null) s += `<circle cx="${cx(li)}" cy="${y(vals[li])}" r="4.5" fill="#5b6fd6" stroke="#fff" stroke-width="2"/>`;
+  const every = Math.max(1, Math.ceil(n / 5)); nights.forEach((x, i) => { if ((n - 1 - i) % every) return; s += xLabel(i, n, cx, w, H, shortLabel(x.date)); });
+  return s + `<line class="cr" x1="0" x2="0" y1="${T}" y2="${T + PH}" stroke="#1f1b17" opacity="0"/></svg><div class="sub" style="margin-top:4px">Median ${fmt(med)}${unit ? " " + unit : ""}</div>`;
+}
+function stacked(nights) {
+  const w = cardW(), L = 30, PW = w - L, H = 150, T = 8, B = 20, PH = H - T - B, n = nights.length, keys = [["deep", "#283a7a"], ["light", "#5b6fd6"], ["rem", "#a9a3ee"], ["awakeIn", "#e2603f"]];
+  const tot = nights.map(x => keys.reduce((a, [k]) => a + (M(x.date)[k] || 0), 0)), top = Math.ceil(Math.max(...tot) / 120) * 120, y = (v) => T + PH - v / top * PH, bw = Math.max(2, Math.min(18, PW / n - (n > 60 ? 1 : 3))), cx = (i) => L + (i + .5) * PW / n;
+  let s = `<svg width="${w}" height="${H}" viewBox="0 0 ${w} ${H}" class="barsvg">`;
+  for (const f of [0, .5, 1]) s += `<line x1="${L}" x2="${w}" y1="${y(top * f)}" y2="${y(top * f)}" stroke="#efe8de"/><text x="0" y="${y(top * f) + 4}" font-size="11" fill="#8a8177">${Math.round(top * f / 60)}h</text>`;
+  nights.forEach((x, i) => { const m = M(x.date); let acc = 0; keys.forEach(([k, c], j) => { const v = m[k] || 0; if (v <= 0) return; const y1 = y(acc), y2 = y(acc + v); acc += v; s += `<rect data-i="${i}" x="${cx(i) - bw / 2}" y="${y2 + (j < 3 ? 1 : 0)}" width="${bw}" height="${Math.max(.5, y1 - y2 - (j < 3 ? 1 : 0))}" rx="${j === 3 ? Math.min(3, bw / 2) : 0}" fill="${c}"/>`; }); });
+  const every = Math.max(1, Math.ceil(n / 5)); nights.forEach((x, i) => { if ((n - 1 - i) % every) return; s += xLabel(i, n, cx, w, H, shortLabel(x.date)); });
+  return s + `</svg><div class="legend"><span><i style="background:var(--deep)"></i>Deep</span><span><i style="background:var(--light)"></i>Light</span><span><i style="background:var(--rem)"></i>REM</span><span><i style="background:var(--awake)"></i>Awake</span></div>`;
+}
+function windowChart(nights) {
+  const w = cardW(), L = 40, PW = w - L, H = 160, T = 8, B = 20, PH = H - T - B, n = nights.length;
+  const rel = (ms, off) => (minOfDay(ms, off) - 18 * 60 + 1440) % 1440, rows = nights.map(x => { const m = M(x.date); return [rel(m.onset, x.offsetMin), rel(m.finalWake, x.offsetMin)]; });
+  const lo = Math.floor((Math.min(...rows.map(r => r[0])) - 30) / 60) * 60, hi = Math.ceil((Math.max(...rows.map(r => r[1])) + 30) / 60) * 60, y = (v) => T + (v - lo) / (hi - lo) * PH, bw = Math.max(2, Math.min(12, PW / n - (n > 60 ? 1 : 3))), cx = (i) => L + (i + .5) * PW / n;
+  const hh = (v) => { const mm = Math.round(v + 18 * 60) % 1440; return `${pad(Math.floor(mm / 60))}:${pad(mm % 60)}`; };
+  let s = `<svg width="${w}" height="${H}" viewBox="0 0 ${w} ${H}" class="barsvg">`;
+  for (let v = lo; v <= hi; v += 120) s += `<line x1="${L}" x2="${w}" y1="${y(v)}" y2="${y(v)}" stroke="#efe8de"/><text x="0" y="${y(v) + 4}" font-size="11" fill="#8a8177">${hh(v)}</text>`;
+  rows.forEach((r, i) => s += `<rect data-i="${i}" x="${cx(i) - bw / 2}" y="${y(r[0])}" width="${bw}" height="${Math.max(2, y(r[1]) - y(r[0]))}" rx="${Math.min(4, bw / 2)}" fill="${nights[i].date === S.date ? "#1f1b17" : "#5b6fd6"}"/>`);
+  const every = Math.max(1, Math.ceil(n / 5)); nights.forEach((x, i) => { if ((n - 1 - i) % every) return; s += xLabel(i, n, cx, w, H, shortLabel(x.date)); });
+  const ma = median(rows.map(r => r[0])), mb = median(rows.map(r => r[1]));
+  return s + `</svg><div class="sub" style="margin-top:4px">Usually asleep by ${hh(ma)}, awake at ${hh(mb)}. Bedtime varies ±${Math.round(sd(rows.map(r => r[0])))} min.</div>`;
+}
+function wireBars(card, nights, tipFn) {
+  const svg = card.querySelector("svg"); if (!svg) return;
+  const pick = (e) => { const r = svg.getBoundingClientRect(), W = svg.viewBox.baseVal.width, px = (e.clientX - r.left) * (W / r.width), L = 30; const i = Math.max(0, Math.min(nights.length - 1, Math.floor((px - L) / ((W - L) / nights.length)))); return i; };
+  let lastI = null;
+  pointer(svg, (e) => { const i = pick(e); lastI = i; showBubble(`<b>${dayLabel(nights[i].date)}</b><br>${tipFn(nights[i])}`, e.clientX, svg.getBoundingClientRect().top); }, () => hideBubble(1400));
+  svg.addEventListener("click", () => { if (lastI != null && nights.length <= 120) { hideBubble(0); go("night", nights[lastI].date); } });
+}
+function renderTrends() {
+  const el = $("#s-trends"), nights = rangeNights(S.range);
+  if (nights.length < 2) { el.innerHTML = `<div class="title">Trends</div><p class="lede">Trends appear after two nights.</p>`; return; }
+  const ms = nights.map(x => M(x.date)), l7 = rangeNights(7).map(x => M(x.date)), tgt = S.target * 60;
+  const debt = l7.reduce((a, m) => a + (tgt - m.asleep), 0), band = nights.map(x => { const q = baseline(x.date, mm => mm?.count); return q ? [q.p25, q.p75] : null; });
+  el.innerHTML = `<div class="title">Trends</div><p class="lede">${S.mode === "sample" ? "Sample nights. " : ""}Tap a bar to see it; tap again to open that night.</p>
+    ${segHtml(S.range, "rseg")}
+    <div class="stats">
+      ${tile("Wake-ups a night", Math.round(mean(ms.map(m => m.count))), "", `${mean(ms.map(m => m.perHour)).toFixed(1)} an hour asleep`)}
+      ${tile("Time asleep", dur(mean(ms.map(m => m.asleep))), "", "average")}
+      ${tile("Sleep debt, 7 nights", debt > 0 ? dur(debt) : "None", "", `against ${S.target}h a night`)}
+      ${tile("Deep sleep", dur(mean(ms.map(m => m.deep))), "", "average")}
+    </div>
+    <div class="card" id="c1"><div class="card-head"><div><h2>Wake-ups</h2><div class="sub">Shaded: your usual range</div></div></div>${bars(nights, {value:x => M(x.date).count, color:"#e2603f", band})}</div>
+    <div class="card" id="c2"><div class="card-head"><div><h2>Time asleep</h2><div class="sub">Dashed: your ${S.target}h target</div></div></div>${bars(nights, {value:x => M(x.date).asleep / 60, color:"#5b6fd6", max:Math.max(10, Math.ceil(Math.max(...ms.map(m => m.asleep / 60)))), ref:S.target, refLbl:`${S.target}h`, yFmt:v => `${v}h`})}</div>
+    <div class="card" id="c3"><div class="card-head"><div><h2>Sleep stages</h2></div></div>${stacked(nights)}</div>
+    <div class="card" id="c4"><div class="card-head"><div><h2>When you sleep</h2><div class="sub">Each bar: asleep to awake</div></div></div>${windowChart(nights)}</div>
+    <div class="card" id="c5"><div class="card-head"><div><h2>Resting heart rate</h2></div></div>${lineChart(nights, {value:d => d.rhr, fmt:v => Math.round(v), unit:"bpm"})}</div>
+    <div class="card" id="c6"><div class="card-head"><div><h2>Heart rate variability</h2></div></div>${lineChart(nights, {value:d => d.hrv, fmt:v => Math.round(v), unit:"ms"})}</div>
+    <div class="card" id="c7"><div class="card-head"><div><h2>Breathing rate</h2></div></div>${lineChart(nights, {value:d => d.resp ?? d.respFull, fmt:v => v.toFixed(1), unit:"/min"})}</div>
+    <div class="card" id="c8"><div class="card-head"><div><h2>Blood oxygen</h2></div></div>${lineChart(nights, {value:d => d.spo2, fmt:v => v.toFixed(1), unit:"%"})}</div>`;
+  el.querySelectorAll("#rseg button").forEach(b => b.onclick = () => { S.range = +b.dataset.v; renderTrends(); });
+  wireBars($("#c1"), nights, x => `${M(x.date).count} wake-ups · ${M(x.date).perHour?.toFixed(1)} an hour`);
+  wireBars($("#c2"), nights, x => `${dur(M(x.date).asleep)} asleep`);
+  wireBars($("#c3"), nights, x => { const m = M(x.date); return `Deep ${dur(m.deep)} · Light ${dur(m.light)}<br>REM ${dur(m.rem)} · Awake ${dur(m.awakeIn)}`; });
+  wireBars($("#c4"), nights, x => `Asleep ${clock(M(x.date).onset, x.offsetMin)} · awake ${clock(M(x.date).finalWake, x.offsetMin)}`);
+  const tipD = (k, f, u) => (x) => { const v = (S.daily[x.date] || {})[k]; return v == null ? "No reading" : `${f(v)} ${u}`; };
+  wireBars($("#c5"), nights, tipD("rhr", v => Math.round(v), "bpm")); wireBars($("#c6"), nights, tipD("hrv", v => Math.round(v), "ms"));
+  wireBars($("#c7"), nights, (x) => { const d = S.daily[x.date] || {}, v = d.resp ?? d.respFull; return v == null ? "No reading" : `${v.toFixed(1)} /min`; }); wireBars($("#c8"), nights, tipD("spo2", v => v.toFixed(1), "%"));
+}
+
+/* ---------------- YOU (connect + settings) ---------------- */
+let flash = null;
+function renderYou() {
+  const el = $("#s-you"), c = client(), t = tokens(), sy = S.sync, last = LS.get("lastSyncAt");
+  const copyBtn = (v) => `<button class="copy" data-copy="${esc(v)}">Copy</button>`;
+  el.innerHTML = `<div class="title">You</div>
+    ${flash ? `<div class="banner" style="${flash.ok ? "background:#e4f4e6;color:#1d5b2c" : ""}"><span>${flash.ok ? "✓" : "⚠"}</span><span>${esc(flash.text)}</span></div>` : ""}
+    <div class="card"><div class="card-head"><div><h2>Google Health</h2><div class="sub">Your Fitbit Air data, read-only, straight to this phone</div></div></div>
+      <div class="state"><div class="st"><small>Signed in</small><b class="${t?.refreshToken ? "ok" : "no"}">${t?.refreshToken ? "Yes" : "Not yet"}</b></div><div class="st"><small>Last sync</small><b>${sy.running ? "Syncing…" : last ? new Date(last).toLocaleString("en-GB", {day:"numeric", month:"short", hour:"2-digit", minute:"2-digit"}) : "Never"}</b></div><div class="st"><small>Nights on this phone</small><b class="num">${S.mode === "live" ? S.nights.length : 0}</b></div><div class="st"><small>Data shown</small><b>${S.mode === "live" ? "Yours" : "Sample"}</b></div></div>
+      ${sy.running ? `<div class="note">Syncing ${esc(sy.step)}${sy.total ? ` ${sy.done}/${sy.total}` : ""}…</div>` : ""}
+      ${sy.error ? `<div class="note no">${esc(sy.error)}</div>` : ""}
+      ${c ? `<div class="form">${t?.refreshToken ? `<button class="btn primary block" id="syncNow" ${sy.running ? "disabled" : ""}>Sync now</button><button class="btn block" id="syncOld" ${sy.running ? "disabled" : ""}>Load another year</button>` : ""}<button class="btn ${t?.refreshToken ? "" : "coral"} block" id="signin">${t?.refreshToken ? "Sign in again" : "Sign in with Google"}</button></div>` : ""}
+      ${(sy.log || []).length && !sy.running ? `<details class="how"><summary>Last sync details</summary><div class="log">${sy.log.map(l => `<div><b class="${l.ok ? "ok" : "no"}">${l.ok ? "OK" : "Problem"}</b> · ${esc(l.section)}: ${esc(l.detail)}</div>`).join("")}</div></details>` : ""}
+    </div>
+    <div class="card"><div class="card-head"><div><h2>${c ? "Your Google client" : "Connect, once"}</h2><div class="sub">${c ? `Saved on this phone: ${esc(c.id.slice(0, 14))}…` : "Use the client you made on the laptop. Add this app's address to it first."}</div></div></div>
+      ${c ? `<button class="btn block" id="editClient">Change client</button>` : ""}
+      <div id="clientForm" ${c ? "hidden" : ""}>
+        <ol class="steps">
+          <li><b>Add this address to your Google client</b>In Google Cloud, open <a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener">Clients</a>, open your client and add it under <i>Authorised JavaScript origins</i> and <i>Authorised redirect URIs</i>:<br><span class="code">${esc(SHOWN_ORIGIN)}</span> ${copyBtn(SHOWN_ORIGIN)}<br><span class="code">${esc(SHOWN_REDIRECT)}</span> ${copyBtn(SHOWN_REDIRECT)}</li>
+          <li><b>Paste the client ID and secret</b><form class="form" onsubmit="return false"><input class="input" id="cid" placeholder="Client ID" autocomplete="off" autocapitalize="off" spellcheck="false"><input class="input" id="csec" placeholder="Client secret" type="password" autocomplete="off"><button class="btn primary" id="saveClient" type="button">Save</button></form></li>
+          <li><b>Sign in with Google</b>You type your password on Google's page. The first sync reads the last 12 months.</li>
+        </ol>
+      </div>
+      <details class="how"><summary>Signed in on another screen?</summary><p>If iPhone finished the Google sign-in in a different window, that window shows a sign-in code. Copy it, come back here and paste it.</p><div class="addrow"><input class="input" id="handoff" placeholder="Paste sign-in code" autocomplete="off"><button class="btn small" id="useHandoff">Use</button></div></details>
+    </div>
+    <div class="card"><div class="card-head"><div><h2>Settings</h2></div></div>
+      <div class="metric" style="margin-top:0"><div class="lab"><span>Nightly sleep target</span><b id="tgtV">${S.target} h</b></div><input type="range" id="tgt" min="6" max="10" step="0.5" value="${S.target}" style="width:100%;accent-color:#1f1b17"></div>
+      <div class="note">Add to your home screen: in Safari tap Share, then Add to Home Screen. In Testing mode Google asks you to sign in again every 7 days.</div>
+    </div>
+    <div class="card"><h2>Privacy</h2><p class="note" style="margin-top:6px">This app talks only to Google: its sign-in page and the Google Health API, read-only. Your nights and sign-in stay in this phone's storage for this app. No analytics, no other servers. The code is open on GitHub. Built on Wristside (MIT). Version ${APP_VERSION}.</p></div>`;
+  el.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = "Copied"; } catch { b.textContent = "Select and copy"; } setTimeout(() => b.textContent = "Copy", 1500); });
+  const on = (id, fn) => { const b = $("#" + id); if (b) b.onclick = fn; };
+  on("saveClient", () => { const id = $("#cid").value.trim(), secret = $("#csec").value.trim(); if (!/\.apps\.googleusercontent\.com$/.test(id) || secret.length < 8) { flash = {ok:false, text:"That does not look like a Google client ID and secret."}; return renderYou(); } LS.set("client", {id, secret}); flash = {ok:true, text:"Saved. Now sign in with Google."}; renderYou(); });
+  on("editClient", () => { $("#clientForm").hidden = false; $("#editClient").hidden = true; });
+  on("signin", () => signIn());
+  on("syncNow", () => sync());
+  on("syncOld", () => sync({history:true}));
+  on("useHandoff", async () => { try { const h = JSON.parse(unb64uStr($("#handoff").value.trim())); await exchange(h.c, h.v); flash = {ok:true, text:"Signed in. Syncing your nights."}; renderYou(); sync(); } catch (e) { flash = {ok:false, text:"That code did not work: " + e.message}; renderYou(); } });
+  const tg = $("#tgt"); tg.oninput = () => { $("#tgtV").textContent = tg.value + " h"; }; tg.onchange = () => { S.target = +tg.value; LS.set("target", S.target); };
+}
+function renderHandoff(code) {
+  document.querySelector(".tabbar").hidden = true; $("#datenav").style.visibility = "hidden";
+  $("#s-night").hidden = false; $("#s-night").innerHTML = `<div class="handoff"><div style="font-size:48px">🔑</div><div class="title">Signed in. One more step.</div><p class="lede">iPhone finished the Google sign-in in a separate window. Copy this code, open Sleep from your home screen, go to You and paste it under "Signed in on another screen?". It works for 10 minutes.</p><div class="card"><div class="code" style="display:block;padding:10px">${esc(code)}</div><div class="form"><button class="btn primary block" id="cpy">Copy sign-in code</button></div></div></div>`;
+  $("#cpy").onclick = async () => { try { await navigator.clipboard.writeText(code); $("#cpy").textContent = "Copied"; } catch { $("#cpy").textContent = "Select the code above and copy it"; } };
+}
+
+/* ---------------- shell ---------------- */
+function paint() {
+  const n = S.byDate.get(S.date), i = S.nights.findIndex(x => x.date === S.date);
+  $("#dateLbl").textContent = n ? dayLabel(n.date) : "";
+  $("#prev").disabled = i <= 0; $("#next").disabled = i < 0 || i >= S.nights.length - 1;
+  $("#datenav").style.visibility = S.tab === "night" ? "visible" : "hidden";
+  $("#topRight").innerHTML = S.mode === "sample" ? `<button class="chip-sample" onclick="go('you')">Sample</button>` : S.sync.running ? `<span class="chip-sync"><i style="background:#5b6fd6"></i>Syncing…</span>` : `<button class="chip-sync" onclick="go('you')"><i></i>${LS.get("lastSyncAt") ? "Synced" : "Connected"}</button>`;
+  document.querySelectorAll(".tabbar button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === S.tab));
+  for (const t of ["night", "trends", "you"]) $("#s-" + t).hidden = t !== S.tab;
+  if (S.tab === "night") renderNight(); else if (S.tab === "trends") renderTrends(); else renderYou();
+}
+function go(tab, date) { if (date) S.date = date; location.hash = tab === "night" && S.date ? `night/${S.date}` : tab; }
+function route() { const [t, a] = location.hash.replace(/^#/, "").split("/"); S.tab = ["night", "trends", "you"].includes(t) ? t : "night"; if (S.tab === "night" && a && S.byDate.has(a)) S.date = a; if (S.tab !== "night") wakesAll = false; window.scrollTo(0, 0); paint(); }
+document.querySelectorAll(".tabbar button").forEach(b => b.onclick = () => go(b.dataset.tab));
+const step = (d) => { const i = S.nights.findIndex(x => x.date === S.date), j = i + d; if (j >= 0 && j < S.nights.length) { wakesAll = false; go("night", S.nights[j].date); } };
+$("#prev").onclick = () => step(-1); $("#next").onclick = () => step(1);
+let sx = null; document.addEventListener("touchstart", e => { if (S.tab === "night" && !e.target.closest(".tl,.mini,input")) sx = [e.touches[0].clientX, e.touches[0].clientY]; else sx = null; }, {passive:true});
+document.addEventListener("touchend", e => { if (!sx) return; const dx = e.changedTouches[0].clientX - sx[0], dy = e.changedTouches[0].clientY - sx[1]; if (Math.abs(dx) > 70 && Math.abs(dy) < 40) step(dx < 0 ? 1 : -1); sx = null; }, {passive:true});
+addEventListener("hashchange", route);
+let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(paint, 200); });
+
+(async () => {
+  const r = await handleRedirect();
+  if (r?.handoff) return renderHandoff(r.handoff);
+  await loadLocal();
+  if (r?.error) flash = {ok:false, text:r.error};
+  if (r?.signedIn) { flash = {ok:true, text:"Signed in. Syncing your nights."}; }
+  route();
+  if (r?.signedIn) sync();
+  else if (connected() && S.mode === "live") { const last = LS.get("lastSyncAt"); if (!last || Date.now() - Date.parse(last) > 3 * 3600000) sync(); }
+  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) navigator.serviceWorker?.register("sw.js").catch(() => {});
+})();
+window.__sleep = {S, computeMetrics, go};
+</script>
+</body>
+</html>
