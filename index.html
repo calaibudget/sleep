@@ -239,7 +239,7 @@ function computeMetrics(n) {
   const asleep = n.sum?.asleep ?? (minsBy.D + minsBy.L + minsBy.R + minsBy.A);
   const inBed = (n.end - n.start)/60000;
   let wakeIn = 0; for (const s of st) if ((s[0]==="W"||s[0]==="X") && s[1] >= onset && s[2] <= finalWake) wakeIn += (s[2]-s[1])/60000;
-  const latency = n.sum?.toFall ?? Math.max(0, (onset - n.start)/60000);
+  const latency = n.sum?.toFall > 0 ? n.sum.toFall : Math.max(0, (onset - n.start)/60000);
   return {
     onset, finalWake, events, count: events.length,
     perHour: asleep > 0 ? events.length/(asleep/60) : null,
@@ -516,7 +516,7 @@ function normalizeLegacyLog(log) {
 }
 
 
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.2.0";
 const SCOPES = ["https://www.googleapis.com/auth/googlehealth.sleep.readonly", "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"];
 const API = "https://health.googleapis.com/v4/users/me/dataTypes";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -538,34 +538,84 @@ const DB = (() => {
 const LS = { get: (k, d = null) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }, set: (k, v) => localStorage.setItem(k, JSON.stringify(v)), del: (k) => localStorage.removeItem(k) };
 
 /* ---------------- state ---------------- */
-const S = { mode:"sample", nights:[], byDate:new Map(), daily:{}, tags:{byDate:{}, custom:[]}, hr:new Map(), metrics:new Map(), date:null, tab:"night", range:30, showHr:true, sync:{running:false, step:"", done:0, total:0, error:null, log:LS.get("syncLog", [])}, target:LS.get("target", 8) };
+const S = { extra:{}, mode:"sample", nights:[], byDate:new Map(), daily:{}, tags:{byDate:{}, custom:[]}, hr:new Map(), metrics:new Map(), date:null, tab:"night", range:30, showHr:true, sync:{running:false, step:"", done:0, total:0, error:null, log:LS.get("syncLog", [])}, target:LS.get("target", 8) };
 const M = (date) => { if (!S.metrics.has(date)) { const n = S.byDate.get(date); S.metrics.set(date, n ? computeMetrics(n) : null); } return S.metrics.get(date); };
+/* Heart-rate surges and oxygen dips (rules tuned on real Fitbit Air nights, 16 Nov 2026):
+   surge = heart rate 15+ bpm above the median of the previous 5 minutes for 6+ seconds;
+   dip   = SpO2 3+ points below the median of the previous 10 readings. Not a medical test. */
+const SURGE_BPM = 15, SURGE_SEC = 6, DIP_PTS = 3;
+function detectSurges(raw) {
+  const out = []; let j = 0, cur = null;
+  for (let i = 0; i < raw.length; i++) {
+    const [t, v] = raw[i];
+    while (j < i && raw[j][0] < t - 300000) j++;
+    if (i - j < 20) continue;
+    const prev = raw.slice(j, i).map(p => p[1]).sort((a, b) => a - b), base = prev[Math.floor(prev.length / 2)];
+    if (v >= base + SURGE_BPM) { if (!cur) cur = [t, t, v, base]; else { cur[1] = t; cur[2] = Math.max(cur[2], v); } }
+    else if (cur && v < base + SURGE_BPM / 2) { if (cur[1] - cur[0] >= SURGE_SEC * 1000) out.push(cur); cur = null; }
+  }
+  const m = []; for (const q of out) { const l = m[m.length - 1]; if (l && q[0] - l[1] < 60000) { l[1] = q[1]; l[2] = Math.max(l[2], q[2]); } else m.push([...q]); }
+  return m;
+}
+function detectDips(sp) {
+  const out = [];
+  for (let i = 0; i < sp.length; i++) {
+    const prev = sp.slice(Math.max(0, i - 10), i).map(p => p[1]).sort((a, b) => a - b); if (prev.length < 5) continue;
+    const base = prev[Math.floor(prev.length / 2)];
+    if (sp[i][1] <= base - DIP_PTS) { const l = out[out.length - 1]; if (l && sp[i][0] - l[1] <= 120000) { l[1] = sp[i][0]; l[2] = Math.min(l[2], sp[i][1]); } else out.push([sp[i][0], sp[i][0], sp[i][1], base]); }
+  }
+  return out;
+}
+function perMinuteMedian(raw) {
+  const by = new Map(); for (const [t, v] of raw) { const k = Math.floor(t / 60000) * 60000; if (!by.has(k)) by.set(k, []); by.get(k).push(v); }
+  return [...by.entries()].sort((a, b) => a[0] - b[0]).map(([k, v]) => { v.sort((a, b) => a - b); return [k, v[Math.floor(v.length / 2)]]; });
+}
+function detailCounts(n, det) {
+  const m = computeMetrics(n), inS = (q) => q[0] >= m.onset && q[0] <= m.finalWake;
+  const su = (det.surges || []).filter(inS), lone = su.filter(q => !m.events.some(e => q[0] <= e.e + 60000 && q[1] >= e.s - 60000));
+  const sp = (det.spo2 || []).filter(p => p[0] >= m.onset && p[0] <= m.finalWake);
+  return { hasHr: (det.hr || []).length > 5, surges: su.length, lone: lone.length, hasSpo2: sp.length > 10, dips: (det.dips || []).filter(inS).length, spo2Min: sp.length ? Math.min(...sp.map(p => p[1])) : null };
+}
+const emptyDetail = () => ({hr: [], spo2: [], surges: [], dips: []});
+function sampleDetail(n, hr) {
+  const rnd = mulberry32(Number(n.date.replace(/-/g, "")) % 2147483647), R = (a, b) => a + (b - a) * rnd();
+  const surges = [];
+  for (const q of n.short) if (rnd() < .55) { const h = hr.find(p => p[0] >= q[0]); if (h) surges.push([q[0], q[0] + R(8, 40) * 1000, h[1] + Math.round(R(16, 26)), h[1]]); }
+  const rem = n.stages.filter(q => q[0] === "R" || q[0] === "L");
+  for (let i = 0, k = Math.round(R(3, 11)); i < k && rem.length; i++) { const q = rem[Math.floor(rnd() * rem.length)], t = q[1] + rnd() * (q[2] - q[1]), h = hr.find(p => p[0] >= t); if (h) surges.push([t, t + R(6, 25) * 1000, h[1] + Math.round(R(15, 22)), h[1]]); }
+  surges.sort((a, b) => a[0] - b[0]);
+  const spo2 = []; let dipLeft = 0, dipDepth = 0;
+  for (let t = n.start; t < n.end; t += 60000) { if (rnd() < .2) continue; if (!dipLeft && rnd() < .008) { dipLeft = Math.round(R(1, 3)); dipDepth = R(3, 5); } let v = 96.4 + (rnd() - .5) * 1.2 - (dipLeft ? dipDepth : 0); if (dipLeft) dipLeft--; spo2.push([t, Math.round(v * 10) / 10]); }
+  return { hr, spo2, surges, dips: detectDips(spo2) };
+}
 function baseline(date, pick, nN = 30) {
   const prior = S.nights.filter(n => n.date < date).slice(-nN).map(n => pick(M(n.date), S.daily[n.date] || {}, n)).filter(v => v != null && isFinite(v));
   if (prior.length < 7) return null;
   return { med: median(prior), p25: quant(prior, .25), p75: quant(prior, .75), n: prior.length };
 }
-function setData({nights, daily, tags, hr, mode}) {
+function setData({nights, daily, tags, hr, mode, extra}) {
   S.nights = nights.slice().sort((a, b) => a.date.localeCompare(b.date));
   S.byDate = new Map(S.nights.map(n => [n.date, n])); S.daily = daily || {}; S.tags = tags || {byDate:{}, custom:[]};
-  S.hr = hr || new Map(); S.metrics = new Map(); S.mode = mode;
+  S.hr = hr || new Map(); S.metrics = new Map(); S.mode = mode; S.extra = extra || {};
+  if (mode === "sample") for (const n of S.nights) { const det = sampleDetail(n, S.hr.get(n.date) || []); S.hr.set(n.date, det); S.extra[n.date] = detailCounts(n, det); }
   if (!S.date || !S.byDate.has(S.date)) S.date = S.nights.length ? S.nights[S.nights.length - 1].date : null;
 }
 async function loadLocal() {
   const nights = await DB.get("nights").catch(() => null);
   if (nights && Object.keys(nights).length) {
-    setData({nights:Object.values(nights), daily:(await DB.get("daily")) || {}, tags:(await DB.get("tags")) || {byDate:{}, custom:[]}, mode:"live"});
+    setData({nights:Object.values(nights), daily:(await DB.get("daily")) || {}, tags:(await DB.get("tags")) || {byDate:{}, custom:[]}, mode:"live", extra:(await DB.get("extra")) || {}});
   } else {
     const s = makeSample();
     setData({...s, tags: LS.get("sampleTags", s.tags), mode:"sample"});
   }
 }
-async function hrFor(date) {
+async function detailFor(date) {
   if (S.hr.has(date)) return S.hr.get(date);
-  if (S.mode !== "live") return [];
-  let hr = await DB.get("hr:" + date).catch(() => null);
-  if (!hr && connected() && S.byDate.get(date)?.src === "api") { try { hr = await fetchHr(await token(), S.byDate.get(date)); } catch { hr = []; } }
-  S.hr.set(date, hr || []); return hr || [];
+  if (S.mode !== "live") return emptyDetail();
+  let det = await DB.get("hr:" + date).catch(() => null);
+  if (Array.isArray(det)) det = {...emptyDetail(), hr: det, old: true};
+  if ((!det || det.old) && connected() && S.byDate.get(date)?.src === "api") { try { det = await fetchDetail(await token(), S.byDate.get(date)); } catch {} }
+  det = det || emptyDetail(); S.hr.set(date, det); return det;
 }
 
 /* ---------------- Google sign-in (code + PKCE, all on this device) ---------------- */
@@ -640,10 +690,16 @@ async function list(tok, type, filter, maxPages = 40) {
 }
 const todayLocal = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 const chunks = (from, to, size) => { const o = []; for (let a = from; a < to; a = addDays(a, size)) { const b = addDays(a, size); o.push([a, b < to ? b : to]); } return o; };
-async function fetchHr(tok, n) {
+async function fetchDetail(tok, n) {
   const f = new Date(n.start - 30 * 60000).toISOString(), t = new Date(n.end + 30 * 60000).toISOString();
-  const pts = await list(tok, "heart-rate", `heart_rate.sample_time.physical_time >= "${f}" AND heart_rate.sample_time.physical_time < "${t}"`, 10);
-  const hr = parseHeartRate(pts); await DB.set("hr:" + n.date, hr); return hr;
+  const hp = await list(tok, "heart-rate", `heart_rate.sample_time.physical_time >= "${f}" AND heart_rate.sample_time.physical_time < "${t}"`, 10);
+  const raw = hp.map(p => [Date.parse(p.heartRate?.sampleTime?.physicalTime), Number(p.heartRate?.beatsPerMinute)]).filter(p => isFinite(p[0]) && p[1] > 0).sort((a, b) => a[0] - b[0]);
+  let sp = [];
+  try { const op = await list(tok, "oxygen-saturation", `oxygen_saturation.sample_time.physical_time >= "${f}" AND oxygen_saturation.sample_time.physical_time < "${t}"`, 5); sp = op.map(p => [Date.parse(p.oxygenSaturation?.sampleTime?.physicalTime), Number(p.oxygenSaturation?.percentage)]).filter(p => isFinite(p[0]) && p[1] > 0).sort((a, b) => a[0] - b[0]); } catch {}
+  const det = {v: 2, hr: perMinuteMedian(raw), spo2: sp, surges: detectSurges(raw), dips: detectDips(sp)};
+  await DB.set("hr:" + n.date, det);
+  S.extra[n.date] = detailCounts(n, det); await DB.set("extra", S.extra);
+  return det;
 }
 async function sync({history = false} = {}) {
   if (S.sync.running) return;
@@ -672,15 +728,16 @@ async function sync({history = false} = {}) {
     catch (e) { log("Breathing per stage", false, e.message); }
     await DB.set("nights", nights); await DB.set("daily", daily);
     const need = Object.values(nights).filter(x => x.date >= addDays(t, -60) && (x.date >= from));
-    S.sync.step = "Heart rate"; S.sync.total = need.length; paint();
+    S.sync.step = "Heart rate and oxygen"; S.sync.total = need.length; paint();
+    if (S.mode !== "live") S.extra = (await DB.get("extra")) || {};
     let ok = 0, bad = 0;
-    for (const x of need) { try { await fetchHr(tok, x); ok++; } catch { bad++; } S.sync.done++; if (S.sync.done % 5 === 0) paint(); }
-    log("Heart rate", bad === 0, `${ok} nights${bad ? `, ${bad} failed` : ""}`);
+    for (const x of need) { try { await fetchDetail(tok, x); ok++; } catch { bad++; } S.sync.done++; if (S.sync.done % 5 === 0) paint(); }
+    log("Heart rate and oxygen", bad === 0, `${ok} nights${bad ? `, ${bad} failed` : ""}`);
     if (!history) LS.set("lastSyncDate", t);
     LS.set("lastSyncAt", new Date().toISOString());
     const tags = (await DB.get("tags")) || (S.mode === "sample" ? {byDate:{}, custom:[]} : S.tags);
     await DB.set("tags", tags);
-    S.date = null; setData({nights:Object.values(nights), daily, tags, mode:"live"});
+    S.date = null; setData({nights:Object.values(nights), daily, tags, mode:"live", extra:S.extra});
   } catch (e) {
     S.sync.error = e.code === "invalid_grant" || e.status === 401 ? "Google's sign-in has expired. Tap Sign in with Google again." : e.message;
     log("Sync", false, S.sync.error);
@@ -712,8 +769,9 @@ function nightInsight(n, m, b) {
   parts.push(`You slept ${dur(m.asleep)}${m.asleep < S.target * 60 - 30 ? `, ${dur(S.target * 60 - m.asleep)} short of your ${S.target}h target` : ""}.`);
   return parts.join(" ");
 }
-function hypnogram(n, m, hr, w) {
-  const PIN = 22, LH = 22, GAP = 5, LAN = 4 * LH + 3 * GAP, HRG = S.showHr && hr.length > 5 ? 74 : 0, AX = 18, H = PIN + LAN + (HRG ? 14 + HRG : 0) + AX, L = 44, PW = w - L;
+function hypnogram(n, m, det, w) {
+  const hr = det.hr || [], spo = (det.spo2 || []).filter(p => p[0] >= n.start && p[0] <= n.end);
+  const PIN = 22, LH = 22, GAP = 5, LAN = 4 * LH + 3 * GAP, HRG = S.showHr && hr.length > 5 ? 74 : 0, SPG = S.showHr && spo.length > 10 ? 46 : 0, AX = 18, H = PIN + LAN + (HRG ? 14 + HRG : 0) + (SPG ? 16 + SPG : 0) + AX, L = 44, PW = w - L;
   const t0 = n.start, t1 = n.end, x = (t) => L + (t - t0) / (t1 - t0) * PW, ly = (l) => PIN + l * (LH + GAP), off = n.offsetMin;
   const laneOf = {W:0, R:1, L:2, D:3, A:2, X:0}, color = {W:"#e2603f", R:"#a9a3ee", L:"#5b6fd6", D:"#283a7a", A:"#5b6fd6", X:"#e2603f"};
   const names = m.classic ? ["Awake", "", "Asleep", ""] : ["Awake", "REM", "Light", "Deep"];
@@ -734,6 +792,15 @@ function hypnogram(n, m, hr, w) {
     let d = ""; pts.forEach((p, i) => { const brk = i && p[0] - pts[i - 1][0] > 10 * 60000; d += `${!i || brk ? "M" : "L"}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`; });
     s += `<path d="${d}" fill="none" stroke="#c0574a" stroke-width="1.6" stroke-linejoin="round" opacity=".85"/>`;
     const rhr = S.daily[n.date]?.rhr; if (rhr && rhr > lo && rhr < hi) s += `<line x1="${L}" x2="${w}" y1="${y(rhr)}" y2="${y(rhr)}" stroke="#5b6fd6" stroke-dasharray="3 4" opacity=".7"/>`;
+    for (const q of det.surges || []) { if (q[0] < m.onset || q[0] > m.finalWake) continue; const px = x(q[0]), py = Math.max(top + 8, y(Math.min(q[2], hi)) - 3); s += `<path d="M${(px - 4).toFixed(1)},${py.toFixed(1)}L${(px + 4).toFixed(1)},${py.toFixed(1)}L${px.toFixed(1)},${(py - 7).toFixed(1)}Z" fill="#8f3b2f"/>`; }
+  }
+  if (SPG) {
+    const top = PIN + LAN + (HRG ? 14 + HRG : 0) + 16, v = spo.map(p => p[1]), lo = Math.min(90, Math.floor(Math.min(...v))), hi = 100, y = (b) => top + SPG - (b - lo) / (hi - lo) * SPG;
+    s += `<text x="0" y="${top + 9}" font-size="12" fill="#8a8177">Oxygen</text><text x="0" y="${top + 23}" font-size="11" fill="#8a8177">${lo}–100</text>`;
+    s += `<line x1="${L}" x2="${w}" y1="${y(95)}" y2="${y(95)}" stroke="#efe8de"/>`;
+    let d = ""; spo.forEach((p, i) => { const brk = i && p[0] - spo[i - 1][0] > 10 * 60000; d += `${!i || brk ? "M" : "L"}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`; });
+    s += `<path d="${d}" fill="none" stroke="#283a7a" stroke-width="1.5" stroke-linejoin="round" opacity=".85"/>`;
+    for (const q of det.dips || []) { if (q[0] < m.onset || q[0] > m.finalWake) continue; s += `<circle cx="${x(q[0]).toFixed(1)}" cy="${y(q[2]).toFixed(1)}" r="4" fill="#283a7a" stroke="#fff" stroke-width="1.8"/>`; }
   }
   s += `<line id="cross" x1="0" x2="0" y1="${PIN - 4}" y2="${H - AX}" stroke="#1f1b17" stroke-width="1.2" opacity="0"/>`;
   return {svg: s + `</svg>`, x, L, PW, t0, t1};
@@ -748,7 +815,7 @@ const tile = (k, v, unit, d, color) => `<div class="tile"><div class="k">${color
 async function renderNight() {
   const el = $("#s-night"), n = S.byDate.get(S.date);
   if (!n) { el.innerHTML = `<div class="title">No nights yet</div><p class="lede">Connect Google Health in the You tab.</p>`; return; }
-  const m = M(n.date), d = S.daily[n.date] || {}, b = baseline(n.date, x => x?.count), latest = n.date === S.nights[S.nights.length - 1].date;
+  const m = M(n.date), d = S.daily[n.date] || {}, b = baseline(n.date, x => x?.count), latest = n.date === S.nights[S.nights.length - 1].date, ex = S.extra[n.date], hasOob = S.nights.some(x => (x.oob || []).length);
   const vs = (cur, pick, fmt) => { const bb = baseline(n.date, pick); return bb && cur != null ? `${fmt(cur - bb.med)} vs usual` : ""; };
   const fm = (x) => `${x > 0 ? "+" : x < 0 ? "−" : "±"}${dur(Math.abs(x))}`;
   const pos = (v, lo, hi) => `${((v - lo) / (hi - lo) * 100).toFixed(1)}%`;
@@ -757,40 +824,45 @@ async function renderNight() {
   const sampleBanner = S.mode === "sample" ? `<div class="banner"><span>⚠</span><span><b>Sample data.</b> These nights are made up to show the design. Connect Google Health in <a href="#you">You</a> to see yours.</span></div>` : "";
   el.innerHTML = `${sampleBanner}
     <div class="title">${latest ? greet() + "<br>" : ""}<em class="num">${m.count} wake-ups</em> ${latest ? "last night." : "this night."}</div>
-    <p class="lede">${nightInsight(n, m, b)}</p>
+    <p class="lede">${nightInsight(n, m, b)}${ex?.hasHr && ex.lone ? ` Your heart rate surged ${ex.lone} time${ex.lone === 1 ? "" : "s"} without waking you.` : ""}</p>
     <div class="card hero">
       <div class="row"><div><div class="k">Disturbances</div><div class="big num">${m.count}</div></div><div class="usual"><span>Your usual</span><b class="num">${b ? `${Math.round(b.p25)}–${Math.round(b.p75)}` : "–"}</b><span>${m.perHour != null ? `${m.perHour.toFixed(1)} an hour asleep` : ""}</span></div></div>
       ${range}
-      <div class="chips"><span><b>${m.brief}</b> brief</span><span><b>${m.shortN}</b> short</span><span><b>${m.full}</b> long</span><span><b>${m.up}</b> out of bed</span></div>
+      <div class="chips"><span><b>${m.brief}</b> brief</span><span><b>${m.shortN}</b> short</span><span><b>${m.full}</b> long</span>${hasOob ? `<span><b>${m.up}</b> out of bed</span>` : ""}</div>
       ${miniStrip(n)}
-      <details class="how"><summary>How wake-ups are counted</summary><p>Every wake between falling asleep and your final wake: each short awakening Google Health records and each awake period, counted once if they are less than a minute apart. Brief is under 3 minutes, short 3 to 5, long over 5 (the only kind Google's own sleep score counts). Wrist trackers miss some real wake time, so read it as a trend.</p></details>
+      <details class="how"><summary>How wake-ups are counted</summary><p>Every wake between falling asleep and your final wake: each short awakening Google Health records and each awake period, counted once if they are less than a minute apart. Brief is under 3 minutes, short 3 to 5, long over 5 (the only kind Google's own sleep score counts). Wrist trackers miss some real wake time, so read it as a trend.</p><p><b>Heart-rate surges</b> are rises of ${SURGE_BPM}+ bpm above your heart rate over the previous 5 minutes, lasting at least ${SURGE_SEC} seconds. They often mark arousals you don't wake from. <b>Oxygen dips</b> are drops of ${DIP_PTS}+ points below your previous 10 readings. Neither is a medical test.</p></details>
     </div>
     <div class="tiles">
       ${tile("Asleep", dur(m.asleep), "", m.eff != null ? `${Math.round(m.eff * 100)}% of time in bed` : "")}
-      ${tile("Sleep window", `${clock(m.onset, n.offsetMin)}`, `– ${clock(m.finalWake, n.offsetMin)}`, `fell asleep after ${dur(m.latency)}`)}
+      ${tile("Sleep window", `${clock(m.onset, n.offsetMin)}`, `– ${clock(m.finalWake, n.offsetMin)}`, m.latency >= 1 ? `fell asleep after ${dur(m.latency)}` : `asleep to final wake`)}
       ${tile("Deep", dur(m.deep), "", vs(m.deep, x => x?.deep, fm), "var(--deep)")}
       ${tile("REM", dur(m.rem), "", vs(m.rem, x => x?.rem, fm), "var(--rem)")}
+      <div class="tile" id="tSurge"><div class="k"><i style="background:#8f3b2f;border-radius:2px"></i>Heart-rate surges</div><div class="v num">${ex?.hasHr ? ex.surges : "–"}</div><div class="d">${ex?.hasHr ? `${ex.lone} without waking you` : "needs heart-rate data"}</div></div>
+      <div class="tile" id="tDip"><div class="k"><i style="background:#283a7a;border-radius:50%"></i>Oxygen dips</div><div class="v num">${ex?.hasSpo2 ? ex.dips : "–"}</div><div class="d">${ex?.hasSpo2 && ex.spo2Min != null ? `lowest ${Math.round(ex.spo2Min)}%` : "needs oxygen data"}</div></div>
       ${tile("Resting heart rate", d.rhr ?? "–", d.rhr != null ? "bpm" : "", vs(d.rhr, (x, dd) => dd.rhr, v => signed(v, 0, " bpm")))}
       ${tile("Heart rate variability", d.hrv != null ? Math.round(d.hrv) : "–", d.hrv != null ? "ms" : "", vs(d.hrv, (x, dd) => dd.hrv, v => signed(v, 0, " ms")))}
       ${tile("Breathing", (d.resp ?? d.respFull) ?? "–", (d.resp ?? d.respFull) != null ? "/min" : "", vs(d.resp ?? d.respFull, (x, dd) => dd.resp ?? dd.respFull, v => signed(v, 1, "")))}
       ${tile("Blood oxygen", d.spo2 != null ? d.spo2.toFixed(1) : "–", d.spo2 != null ? "%" : "", d.tempDelta != null ? `skin temp ${signed(d.tempDelta, 1, "°C")}` : "")}
     </div>
-    <div class="card"><div class="card-head"><div><h2>Your night</h2><div class="sub">Touch and slide to see any minute</div></div><button class="toggle" id="hrTog" aria-pressed="${S.showHr}">Heart</button></div><div class="tl" id="tl"></div>
-      <div class="legend"><span><i style="background:var(--deep)"></i>Deep</span><span><i style="background:var(--light)"></i>Light</span><span><i style="background:var(--rem)"></i>REM</span><span><i style="background:var(--awake)"></i>Awake</span><span><i class="pin"></i>Wake-up</span><span><i class="up"></i>Out of bed</span></div></div>
+    <div class="card"><div class="card-head"><div><h2>Your night</h2><div class="sub">Touch and slide to see any minute</div></div><button class="toggle" id="hrTog" aria-pressed="${S.showHr}">Vitals</button></div><div class="tl" id="tl"></div>
+      <div class="legend"><span><i style="background:var(--deep)"></i>Deep</span><span><i style="background:var(--light)"></i>Light</span><span><i style="background:var(--rem)"></i>REM</span><span><i style="background:var(--awake)"></i>Awake</span><span><i class="pin"></i>Wake-up</span><span><i style="background:none;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:8px solid #8f3b2f;border-radius:0"></i>Surge</span><span><i style="background:#283a7a;border-radius:50%"></i>Oxygen dip</span>${hasOob ? `<span><i class="up"></i>Out of bed</span>` : ""}</div></div>
     <div class="card"><div class="card-head"><div><h2>Every wake-up</h2><div class="sub">${m.count} between ${clock(m.onset, n.offsetMin)} and ${clock(m.finalWake, n.offsetMin)}</div></div></div><div id="wakes"></div></div>`;
   el.querySelectorAll(".mini rect").forEach(r => r.onclick = () => go("night", r.dataset.date));
   $("#hrTog").onclick = () => { S.showHr = !S.showHr; renderNight(); };
   renderWakes(n, m);
-  const hr = await hrFor(n.date); if (S.date !== n.date || S.tab !== "night") return;
-  const box = $("#tl"), g = hypnogram(n, m, hr, cardW());
+  const det = await detailFor(n.date); if (S.date !== n.date || S.tab !== "night") return;
+  if (!ex && S.extra[n.date]) return renderNight(); // counts just arrived: redraw tiles and summary
+  const hr = det.hr || [], spo = det.spo2 || [];
+  const box = $("#tl"), g = hypnogram(n, m, det, cardW());
   box.innerHTML = g.svg;
   const svg = box.querySelector("svg"), cross = svg.querySelector("#cross"), st = n.stages || [];
   pointer(svg, (e) => {
     const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) * (svg.viewBox.baseVal.width / r.width); if (px < g.L) return;
     const t = g.t0 + (px - g.L) / g.PW * (g.t1 - g.t0); cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("opacity", .5);
     const s = st.find(q => t >= q[1] && t < q[2]), ev = m.events.find(q => t >= q.s - 60000 && t <= q.e + 60000);
-    let h = null, best = 1e12; for (const p of hr) { const dd = Math.abs(p[0] - t); if (dd < best) { best = dd; h = p; } }
-    showBubble(`<b class="num">${clock(t, n.offsetMin)}</b> · ${s ? STAGE[s[0]].name : "In bed"}${h && best < 5 * 60000 ? `<br>Heart ${h[1]} bpm` : ""}${ev ? `<br>Wake-up ${ev.i}: ${durShort(ev.min)}${ev.up ? ", out of bed" : ""}` : ""}`, e.clientX, r.top + 10);
+    const near = (arr, lim) => { let h = null, best = 1e12; for (const p of arr) { const dd = Math.abs(p[0] - t); if (dd < best) { best = dd; h = p; } } return best < lim ? h : null; };
+    const h = near(hr, 5 * 60000), o = near(spo, 3 * 60000), sg = (det.surges || []).find(q => t >= q[0] - 45000 && t <= q[1] + 45000), dp = (det.dips || []).find(q => t >= q[0] - 90000 && t <= q[1] + 90000);
+    showBubble(`<b class="num">${clock(t, n.offsetMin)}</b> · ${s ? STAGE[s[0]].name : "In bed"}${h ? `<br>Heart ${h[1]} bpm` : ""}${o ? ` · Oxygen ${Math.round(o[1])}%` : ""}${ev ? `<br>Wake-up ${ev.i}: ${durShort(ev.min)}${ev.up ? ", out of bed" : ""}` : ""}${sg ? `<br>Heart-rate surge to ${Math.round(sg[2])} bpm (+${Math.round(sg[2] - sg[3])})` : ""}${dp ? `<br>Oxygen dip to ${Math.round(dp[2])}%` : ""}`, e.clientX, r.top + 10);
   }, () => { cross.setAttribute("opacity", 0); hideBubble(900); });
 }
 let wakesAll = false;
@@ -807,6 +879,7 @@ const xLabel = (i, n, cx, w, H, txt) => { const last = i === n - 1, x = last ? w
 function niceMax(v) { const steps = [2, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 80, 100]; return steps.find(s => s >= v) ?? Math.ceil(v / 50) * 50; }
 function bars(nights, {value, color, tip, max, band, ref, refLbl, yFmt = (v) => v, h = 150}) {
   const w = cardW(), L = 30, PW = w - L, H = h, T = 8, B = 20, PH = H - T - B, vals = nights.map(value), n = nights.length;
+  if (!vals.some(v => v != null)) return `<div class="empty">No data for these nights yet.</div>`;
   const top = max ?? niceMax(Math.max(...vals.filter(v => v != null), ref || 0) * 1.08), y = (v) => T + PH - v / top * PH, bw = Math.max(2, Math.min(18, PW / n - (n > 60 ? 1 : 3))), cx = (i) => L + (i + .5) * PW / n;
   let s = `<svg width="${w}" height="${H}" viewBox="0 0 ${w} ${H}" class="barsvg">`;
   for (const f of [0, .5, 1]) s += `<line x1="${L}" x2="${w}" y1="${y(top * f)}" y2="${y(top * f)}" stroke="#efe8de"/><text x="0" y="${y(top * f) + 4}" font-size="11" fill="#8a8177">${yFmt(Math.round(top * f * 10) / 10)}</text>`;
@@ -871,6 +944,8 @@ function renderTrends() {
       ${tile("Deep sleep", dur(mean(ms.map(m => m.deep))), "", "average")}
     </div>
     <div class="card" id="c1"><div class="card-head"><div><h2>Wake-ups</h2><div class="sub">Shaded: your usual range</div></div></div>${bars(nights, {value:x => M(x.date).count, color:"#e2603f", band})}</div>
+    <div class="card" id="cS"><div class="card-head"><div><h2>Heart-rate surges</h2><div class="sub">Dark part: surges without a wake-up</div></div></div>${bars(nights, {value:x => S.extra[x.date]?.hasHr ? S.extra[x.date].surges : null, color:"#d9a79c"})}</div>
+    <div class="card" id="cD"><div class="card-head"><div><h2>Oxygen dips</h2><div class="sub">Drops of ${DIP_PTS}+ points during sleep</div></div></div>${bars(nights, {value:x => S.extra[x.date]?.hasSpo2 ? S.extra[x.date].dips : null, color:"#283a7a"})}</div>
     <div class="card" id="c2"><div class="card-head"><div><h2>Time asleep</h2><div class="sub">Dashed: your ${S.target}h target</div></div></div>${bars(nights, {value:x => M(x.date).asleep / 60, color:"#5b6fd6", max:Math.max(10, Math.ceil(Math.max(...ms.map(m => m.asleep / 60)))), ref:S.target, refLbl:`${S.target}h`, yFmt:v => `${v}h`})}</div>
     <div class="card" id="c3"><div class="card-head"><div><h2>Sleep stages</h2></div></div>${stacked(nights)}</div>
     <div class="card" id="c4"><div class="card-head"><div><h2>When you sleep</h2><div class="sub">Each bar: asleep to awake</div></div></div>${windowChart(nights)}</div>
@@ -881,6 +956,9 @@ function renderTrends() {
   el.querySelectorAll("#rseg button").forEach(b => b.onclick = () => { S.range = +b.dataset.v; renderTrends(); });
   wireBars($("#c1"), nights, x => `${M(x.date).count} wake-ups · ${M(x.date).perHour?.toFixed(1)} an hour`);
   wireBars($("#c2"), nights, x => `${dur(M(x.date).asleep)} asleep`);
+  wireBars($("#cS"), nights, x => { const e = S.extra[x.date]; return e?.hasHr ? `${e.surges} surges · ${e.lone} without waking` : "No heart-rate data"; });
+  wireBars($("#cD"), nights, x => { const e = S.extra[x.date]; return e?.hasSpo2 ? `${e.dips} dips${e.spo2Min != null ? ` · lowest ${Math.round(e.spo2Min)}%` : ""}` : "No oxygen data"; });
+  overlayLone(nights);
   wireBars($("#c3"), nights, x => { const m = M(x.date); return `Deep ${dur(m.deep)} · Light ${dur(m.light)}<br>REM ${dur(m.rem)} · Awake ${dur(m.awakeIn)}`; });
   wireBars($("#c4"), nights, x => `Asleep ${clock(M(x.date).onset, x.offsetMin)} · awake ${clock(M(x.date).finalWake, x.offsetMin)}`);
   const tipD = (k, f, u) => (x) => { const v = (S.daily[x.date] || {})[k]; return v == null ? "No reading" : `${f(v)} ${u}`; };
@@ -888,6 +966,11 @@ function renderTrends() {
   wireBars($("#c7"), nights, (x) => { const d = S.daily[x.date] || {}, v = d.resp ?? d.respFull; return v == null ? "No reading" : `${v.toFixed(1)} /min`; }); wireBars($("#c8"), nights, tipD("spo2", v => v.toFixed(1), "%"));
 }
 
+function overlayLone(nights) {
+  // darker lower part of each bar: surges that came without a wake-up (same scale as the bar)
+  const svg = $("#cS")?.querySelector("svg"); if (!svg) return;
+  svg.querySelectorAll("path[data-i]").forEach(p => { const e = S.extra[nights[+p.dataset.i].date]; if (!e?.hasHr || !e.surges || !e.lone) return; const bb = p.getBBox(), hh = bb.height * (e.lone / e.surges); const r = document.createElementNS("http://www.w3.org/2000/svg", "rect"); r.setAttribute("x", bb.x); r.setAttribute("y", bb.y + bb.height - hh); r.setAttribute("width", bb.width); r.setAttribute("height", Math.max(0, hh)); r.setAttribute("rx", Math.min(2, bb.width / 2)); r.setAttribute("fill", "#8f3b2f"); r.setAttribute("pointer-events", "none"); svg.appendChild(r); });
+}
 /* ---------------- YOU (connect + settings) ---------------- */
 let flash = null;
 function renderYou() {
