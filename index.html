@@ -516,7 +516,7 @@ function normalizeLegacyLog(log) {
 }
 
 
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.2.1";
 const SCOPES = ["https://www.googleapis.com/auth/googlehealth.sleep.readonly", "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"];
 const API = "https://health.googleapis.com/v4/users/me/dataTypes";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -669,7 +669,10 @@ async function handleRedirect() {
   if (q.get("error")) return {error: q.get("error") === "access_denied" ? "You cancelled the Google sign-in." : q.get("error")};
   let st; try { st = JSON.parse(unb64uStr(q.get("state") || "")); } catch { return {error:"The sign-in reply was not understood. Try again."}; }
   const code = q.get("code");
-  if (!client()) return {handoff: b64uStr(JSON.stringify({c: code, v: st.v}))}; // landed in a window without your settings
+  const pend = LS.get("pending"), sameWindow = Boolean(pend && pend.nonce === st.n);
+  // iPhone can finish Google's sign-in in Safari instead of the home-screen app, and the two keep
+  // separate storage. Only the window that started the sign-in redeems the code; any other shows it.
+  if (!client() || !sameWindow) return {handoff: b64uStr(JSON.stringify({c: code, v: st.v}))};
   try { await exchange(code, st.v); return {signedIn:true}; } catch (e) { return {error:e.message}; }
 }
 
@@ -982,7 +985,7 @@ function renderYou() {
       <div class="state"><div class="st"><small>Signed in</small><b class="${t?.refreshToken ? "ok" : "no"}">${t?.refreshToken ? "Yes" : "Not yet"}</b></div><div class="st"><small>Last sync</small><b>${sy.running ? "Syncing…" : last ? new Date(last).toLocaleString("en-GB", {day:"numeric", month:"short", hour:"2-digit", minute:"2-digit"}) : "Never"}</b></div><div class="st"><small>Nights on this phone</small><b class="num">${S.mode === "live" ? S.nights.length : 0}</b></div><div class="st"><small>Data shown</small><b>${S.mode === "live" ? "Yours" : "Sample"}</b></div></div>
       ${sy.running ? `<div class="note">Syncing ${esc(sy.step)}${sy.total ? ` ${sy.done}/${sy.total}` : ""}…</div>` : ""}
       ${sy.error ? `<div class="note no">${esc(sy.error)}</div>` : ""}
-      ${c ? `<div class="form">${t?.refreshToken ? `<button class="btn primary block" id="syncNow" ${sy.running ? "disabled" : ""}>Sync now</button><button class="btn block" id="syncOld" ${sy.running ? "disabled" : ""}>Load another year</button>` : ""}<button class="btn ${t?.refreshToken ? "" : "coral"} block" id="signin">${t?.refreshToken ? "Sign in again" : "Sign in with Google"}</button></div>` : ""}
+      ${c ? `<div class="form">${t?.refreshToken ? `<button class="btn primary block" id="syncNow" ${sy.running ? "disabled" : ""}>Sync now</button><button class="btn block" id="syncOld" ${sy.running ? "disabled" : ""}>Load another year</button>` : ""}<button class="btn ${t?.refreshToken ? "" : "coral"} block" id="signin">${t?.refreshToken ? "Sign in again" : "Sign in with Google"}</button>${t?.refreshToken ? "" : `<button class="btn block" id="pasteSignin">Paste sign-in code</button><div class="note" style="margin-top:0">After Sign in with Google, if iPhone shows a page with a sign-in code, copy it and tap Paste sign-in code here.</div>`}</div>` : ""}
       ${(sy.log || []).length && !sy.running ? `<details class="how"><summary>Last sync details</summary><div class="log">${sy.log.map(l => `<div><b class="${l.ok ? "ok" : "no"}">${l.ok ? "OK" : "Problem"}</b> · ${esc(l.section)}: ${esc(l.detail)}</div>`).join("")}</div></details>` : ""}
     </div>
     <div class="card"><div class="card-head"><div><h2>${c ? "Your Google client" : "Connect, once"}</h2><div class="sub">${c ? `Saved on this phone: ${esc(c.id.slice(0, 14))}…` : "Use the client you made on the laptop. Add this app's address to it first."}</div></div></div>
@@ -1009,7 +1012,8 @@ function renderYou() {
   on("signin", () => signIn());
   on("syncNow", () => sync());
   on("syncOld", () => sync({history:true}));
-  on("useHandoff", async () => { try { const h = JSON.parse(unb64uStr($("#handoff").value.trim())); await exchange(h.c, h.v); flash = {ok:true, text:"Signed in. Syncing your nights."}; renderYou(); sync(); } catch (e) { flash = {ok:false, text:"That code did not work: " + e.message}; renderYou(); } });
+  on("pasteSignin", async () => { let txt = ""; try { txt = await navigator.clipboard.readText(); } catch {} if (!/^sleep-signin:/.test(txt.trim())) txt = prompt("Paste the sign-in code here:") || ""; await useSignin(txt); });
+  on("useHandoff", async () => useSignin($("#handoff").value));
   const tg = $("#tgt"); tg.oninput = () => { $("#tgtV").textContent = tg.value + " h"; }; tg.onchange = () => { S.target = +tg.value; LS.set("target", S.target); };
 }
 function renderSetup(c, code) {
@@ -1019,11 +1023,22 @@ function renderSetup(c, code) {
     <div class="card" style="text-align:left"><ol class="steps"><li><b>Copy the setup code</b><button class="btn primary block" id="cpySetup" style="margin-top:8px">Copy setup code</button></li><li><b>Add Sleep to your Home Screen</b>Tap the Share button <span style="font-size:18px">⎋</span> at the bottom of Safari, then Add to Home Screen.</li><li><b>Open Sleep from your Home Screen</b>Go to You and tap Paste setup code, then Sign in with Google.</li></ol></div></div>`;
   $("#cpySetup").onclick = async () => { try { await navigator.clipboard.writeText(SETUP_PREFIX + code); $("#cpySetup").textContent = "Copied. Now Share, then Add to Home Screen"; } catch { $("#cpySetup").textContent = "Could not copy: press and hold to copy the address instead"; } };
 }
+async function useSignin(text) {
+  try { const h = JSON.parse(unb64uStr(String(text || "").trim().replace(/^sleep-signin:/, ""))); await exchange(h.c, h.v); flash = {ok:true, text:"Signed in. Syncing your nights."}; renderYou(); sync(); }
+  catch (e) { flash = {ok:false, text:"That sign-in code did not work (" + e.message + "). Tap Sign in with Google again and use the new code within 10 minutes."}; renderYou(); }
+}
 function renderHandoff(code) {
   document.querySelector(".tabbar").hidden = true; $("#datenav").style.visibility = "hidden";
-  $("#s-night").hidden = false; $("#s-night").innerHTML = `<div class="handoff"><div style="font-size:48px">🔑</div><div class="title">Signed in. One more step.</div><p class="lede">iPhone finished the Google sign-in in a separate window. Copy this code, open Sleep from your home screen, go to You and paste it under "Signed in on another screen?". It works for 10 minutes.</p><div class="card"><div class="code" style="display:block;padding:10px">${esc(code)}</div><div class="form"><button class="btn primary block" id="cpy">Copy sign-in code</button></div></div></div>`;
-  $("#cpy").onclick = async () => { try { await navigator.clipboard.writeText(code); $("#cpy").textContent = "Copied"; } catch { $("#cpy").textContent = "Select the code above and copy it"; } };
+  const sec = $("#s-night"); sec.hidden = false;
+  sec.innerHTML = `<div class="handoff"><div style="font-size:48px">🔑</div><div class="title">Signed in. One more tap.</div>
+    <p class="lede">Google finished in this window, not in the Sleep app. Copy the code, go back to the Sleep app and paste it. It works for 10 minutes.</p>
+    <div class="card" style="text-align:left"><ol class="steps"><li><b>Copy the sign-in code</b><button class="btn primary block" id="cpy" style="margin-top:8px">Copy sign-in code</button></li>
+    <li><b>Go back to Sleep</b>Tap Done at the top left, or open Sleep from your Home Screen.</li>
+    <li><b>Paste it</b>In You, tap Paste sign-in code.</li></ol>
+    <div class="code" style="display:block;padding:10px;margin-top:6px;font-size:11px">${esc(code)}</div></div></div>`;
+  $("#cpy").onclick = async () => { try { await navigator.clipboard.writeText("sleep-signin:" + code); $("#cpy").textContent = "Copied. Now go back to Sleep"; } catch { $("#cpy").textContent = "Press and hold the code below to copy it"; } };
 }
+
 
 /* ---------------- shell ---------------- */
 function paint() {
