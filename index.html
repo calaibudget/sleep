@@ -516,7 +516,7 @@ function normalizeLegacyLog(log) {
 }
 
 
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.1.0";
 const SCOPES = ["https://www.googleapis.com/auth/googlehealth.sleep.readonly", "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"];
 const API = "https://health.googleapis.com/v4/users/me/dataTypes";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -573,6 +573,13 @@ const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(
 const b64uStr = (s) => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const unb64uStr = (s) => decodeURIComponent(escape(atob(s.replace(/-/g, "+").replace(/_/g, "/"))));
 const client = () => LS.get("client");
+const standalone = () => navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
+const SETUP_PREFIX = "sleep-setup:";
+function parseSetup(text) {
+  const t = String(text || "").trim().replace(/^.*#setup=/, "").replace(new RegExp("^" + SETUP_PREFIX), "");
+  try { const j = JSON.parse(unb64uStr(t)); if (/\.apps\.googleusercontent\.com$/.test(j.i) && String(j.s || "").length >= 8) return {id: j.i, secret: j.s}; } catch {}
+  return null;
+}
 const tokens = () => LS.get("tokens");
 const connected = () => Boolean(client() && tokens()?.refreshToken);
 async function signIn() {
@@ -896,7 +903,7 @@ function renderYou() {
       ${(sy.log || []).length && !sy.running ? `<details class="how"><summary>Last sync details</summary><div class="log">${sy.log.map(l => `<div><b class="${l.ok ? "ok" : "no"}">${l.ok ? "OK" : "Problem"}</b> · ${esc(l.section)}: ${esc(l.detail)}</div>`).join("")}</div></details>` : ""}
     </div>
     <div class="card"><div class="card-head"><div><h2>${c ? "Your Google client" : "Connect, once"}</h2><div class="sub">${c ? `Saved on this phone: ${esc(c.id.slice(0, 14))}…` : "Use the client you made on the laptop. Add this app's address to it first."}</div></div></div>
-      ${c ? `<button class="btn block" id="editClient">Change client</button>` : ""}
+      ${c ? `<button class="btn block" id="editClient">Change client</button>` : `<button class="btn coral block" id="pasteSetup">Paste setup code</button><div class="note" style="margin-bottom:10px">Scanned the QR code on your laptop and tapped Copy? Paste it here. Or type the client ID and secret below.</div>`}
       <div id="clientForm" ${c ? "hidden" : ""}>
         <ol class="steps">
           <li><b>Add this address to your Google client</b>In Google Cloud, open <a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener">Clients</a>, open your client and add it under <i>Authorised JavaScript origins</i> and <i>Authorised redirect URIs</i>:<br><span class="code">${esc(SHOWN_ORIGIN)}</span> ${copyBtn(SHOWN_ORIGIN)}<br><span class="code">${esc(SHOWN_REDIRECT)}</span> ${copyBtn(SHOWN_REDIRECT)}</li>
@@ -915,11 +922,19 @@ function renderYou() {
   const on = (id, fn) => { const b = $("#" + id); if (b) b.onclick = fn; };
   on("saveClient", () => { const id = $("#cid").value.trim(), secret = $("#csec").value.trim(); if (!/\.apps\.googleusercontent\.com$/.test(id) || secret.length < 8) { flash = {ok:false, text:"That does not look like a Google client ID and secret."}; return renderYou(); } LS.set("client", {id, secret}); flash = {ok:true, text:"Saved. Now sign in with Google."}; renderYou(); });
   on("editClient", () => { $("#clientForm").hidden = false; $("#editClient").hidden = true; });
+  on("pasteSetup", async () => { let txt = ""; try { txt = await navigator.clipboard.readText(); } catch {} if (!parseSetup(txt)) txt = prompt("Paste the setup code here:") || ""; const c2 = parseSetup(txt); if (!c2) { flash = {ok:false, text:"That is not a setup code. Scan the QR code again and tap Copy setup code."}; return renderYou(); } LS.set("client", c2); flash = {ok:true, text:"Google client saved. Now tap Sign in with Google."}; renderYou(); });
   on("signin", () => signIn());
   on("syncNow", () => sync());
   on("syncOld", () => sync({history:true}));
   on("useHandoff", async () => { try { const h = JSON.parse(unb64uStr($("#handoff").value.trim())); await exchange(h.c, h.v); flash = {ok:true, text:"Signed in. Syncing your nights."}; renderYou(); sync(); } catch (e) { flash = {ok:false, text:"That code did not work: " + e.message}; renderYou(); } });
   const tg = $("#tgt"); tg.oninput = () => { $("#tgtV").textContent = tg.value + " h"; }; tg.onchange = () => { S.target = +tg.value; LS.set("target", S.target); };
+}
+function renderSetup(c, code) {
+  document.querySelector(".tabbar").hidden = true; $("#datenav").style.visibility = "hidden";
+  const sec = $("#s-night"); sec.hidden = false;
+  sec.innerHTML = `<div class="handoff"><div style="font-size:48px">📲</div><div class="title">Your Google client is here.</div><p class="lede">Three taps to finish on this iPhone:</p>
+    <div class="card" style="text-align:left"><ol class="steps"><li><b>Copy the setup code</b><button class="btn primary block" id="cpySetup" style="margin-top:8px">Copy setup code</button></li><li><b>Add Sleep to your Home Screen</b>Tap the Share button <span style="font-size:18px">⎋</span> at the bottom of Safari, then Add to Home Screen.</li><li><b>Open Sleep from your Home Screen</b>Go to You and tap Paste setup code, then Sign in with Google.</li></ol></div></div>`;
+  $("#cpySetup").onclick = async () => { try { await navigator.clipboard.writeText(SETUP_PREFIX + code); $("#cpySetup").textContent = "Copied. Now Share, then Add to Home Screen"; } catch { $("#cpySetup").textContent = "Could not copy: press and hold to copy the address instead"; } };
 }
 function renderHandoff(code) {
   document.querySelector(".tabbar").hidden = true; $("#datenav").style.visibility = "hidden";
@@ -951,6 +966,12 @@ let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(pai
 (async () => {
   const r = await handleRedirect();
   if (r?.handoff) return renderHandoff(r.handoff);
+  if (location.hash.startsWith("#setup=")) {
+    const code = location.hash.slice(7), c = parseSetup(code);
+    history.replaceState(null, "", location.pathname + "#you");
+    if (c) { LS.set("client", c); if (!standalone()) return renderSetup(c, code); flash = {ok:true, text:"Google client saved. Now tap Sign in with Google."}; }
+    else flash = {ok:false, text:"That setup link was not complete. Scan the QR code again."};
+  }
   await loadLocal();
   if (r?.error) flash = {ok:false, text:r.error};
   if (r?.signedIn) { flash = {ok:true, text:"Signed in. Syncing your nights."}; }
