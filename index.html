@@ -365,6 +365,8 @@ function normalizeSleepPoint(p) {
     edited: Boolean(s.metadata?.manuallyEdited),
     processed: s.metadata?.processed !== false,
     stagesStatus: s.metadata?.stagesStatus ?? null,
+    // Google writes a provisional record during the night and finalises it ~4 h after waking.
+    updated: s.updateTime ? ms(s.updateTime) : null,
     device: p.dataSource?.device?.displayName ?? null,
     stages,
     short: span(s.shortAwakenings),
@@ -516,7 +518,7 @@ function normalizeLegacyLog(log) {
 }
 
 
-const APP_VERSION = "1.2.5";
+const APP_VERSION = "1.3.0";
 const SCOPES = ["https://www.googleapis.com/auth/googlehealth.sleep.readonly", "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"];
 const API = "https://health.googleapis.com/v4/users/me/dataTypes";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -826,7 +828,8 @@ async function renderNight() {
   const pos = (v, lo, hi) => `${((v - lo) / (hi - lo) * 100).toFixed(1)}%`;
   let range = "";
   if (b) { const lo = Math.min(b.p25, m.count, b.med) - 4, hi = Math.max(b.p75, m.count, b.med) + 4; range = `<div class="rangebar"><div class="tr"></div><div class="band" style="left:${pos(b.p25, lo, hi)};width:calc(${pos(b.p75, lo, hi)} - ${pos(b.p25, lo, hi)})"></div><div class="med" style="left:${pos(b.med, lo, hi)}"></div><div class="me" style="left:${pos(m.count, lo, hi)}"></div></div><div class="rangecap"><span>Fewer</span><span>Your usual range</span><span>More</span></div>`; }
-  const sampleBanner = S.mode === "sample" ? `<div class="banner"><span>⚠</span><span><b>Sample data.</b> These nights are made up to show the design. Connect Google Health in <a href="#you">You</a> to see yours.</span></div>` : "";
+  const sampleBanner = S.mode === "sample" ? `<div class="banner"><span>⚠</span><span><b>Sample data.</b> These nights are made up to show the design. Connect Google Health in <a href="#you">You</a> to see yours.</span></div>`
+    : isProvisional(n) ? `<div class="banner" style="background:#eef0fb;color:#2a3566"><span>◔</span><span><b>Google is still finishing this night.</b> Times and minutes can change until about ${clock(n.end + 4 * 3600000, n.offsetMin)}; the app refreshes by itself when you open it.</span></div>` : "";
   el.innerHTML = `${sampleBanner}
     <div class="title">${latest ? greet() + "<br>" : ""}<em class="num">${m.count} wake-ups</em> ${latest ? "last night." : "this night."}</div>
     <p class="lede">${nightInsight(n, m, b)}${ex?.hasHr && ex.lone ? ` Your heart rate surged ${ex.lone} time${ex.lone === 1 ? "" : "s"} without waking you.` : ""}</p>
@@ -991,7 +994,9 @@ function renderYou() {
       ${(sy.log || []).length && !sy.running ? `<details class="how"><summary>Last sync details</summary><div class="log">${sy.log.map(l => `<div><b class="${l.ok ? "ok" : "no"}">${l.ok ? "OK" : "Problem"}</b> · ${esc(l.section)}: ${esc(l.detail)}</div>`).join("")}</div></details>` : ""}
     </div>
     <div class="card"><div class="card-head"><div><h2>${c ? "Your Google client" : "Connect, once"}</h2><div class="sub">${c ? `Saved on this phone: ${esc(c.id.slice(0, 14))}…` : "Use the client you made on the laptop. Add this app's address to it first."}</div></div></div>
-      ${c ? `<button class="btn block" id="pasteSetup">Paste setup code</button><button class="btn block" id="editClient" style="margin-top:8px">Change client by hand</button>` : `<button class="btn coral block" id="pasteSetup">Paste setup code</button><div class="note" style="margin-bottom:10px">Scanned the QR code on your laptop and tapped Copy? Paste it here. Or type the client ID and secret below.</div>`}
+      <div class="note" style="margin:0 0 6px">Setup code (backup): tap the box, tap Paste, then Connect.</div>
+      <div class="addrow" style="margin-top:0"><input class="input" id="setupField" placeholder="sleep-setup:…" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="btn small primary" id="pasteSetup">Connect</button></div>
+      ${c ? `<button class="btn block" id="editClient" style="margin-top:10px">Change client by hand</button>` : ""}
       <div id="clientForm" ${c ? "hidden" : ""}>
         <ol class="steps">
           <li><b>Add this address to your Google client</b>In Google Cloud, open <a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener">Clients</a>, open your client and add it under <i>Authorised JavaScript origins</i> and <i>Authorised redirect URIs</i>:<br><span class="code">${esc(SHOWN_ORIGIN)}</span> ${copyBtn(SHOWN_ORIGIN)}<br><span class="code">${esc(SHOWN_REDIRECT)}</span> ${copyBtn(SHOWN_REDIRECT)}</li>
@@ -1010,7 +1015,7 @@ function renderYou() {
   const on = (id, fn) => { const b = $("#" + id); if (b) b.onclick = fn; };
   on("saveClient", () => { const id = $("#cid").value.trim(), secret = $("#csec").value.trim(); if (!/\.apps\.googleusercontent\.com$/.test(id) || secret.length < 8) { flash = {ok:false, text:"That does not look like a Google client ID and secret."}; return renderYou(); } LS.set("client", {id, secret}); flash = {ok:true, text:"Saved. Now sign in with Google."}; renderYou(); });
   on("editClient", () => { $("#clientForm").hidden = false; $("#editClient").hidden = true; });
-  on("pasteSetup", async () => { let txt = ""; try { txt = await navigator.clipboard.readText(); } catch {} if (!parseSetup(txt)) txt = prompt("Paste the setup code here:") || ""; const c2 = parseSetup(txt); if (!c2) { flash = {ok:false, text:"That is not a setup code. Scan the QR code again and tap Copy setup code."}; return renderYou(); } const linked = applySetup(c2); flash = {ok:true, text: linked ? "Connected. Syncing your nights." : "Google client saved. Now tap Sign in with Google."}; renderYou(); if (linked) sync(); });
+  on("pasteSetup", async () => { let txt = $("#setupField").value; if (!parseSetup(txt)) { try { txt = await navigator.clipboard.readText(); } catch {} } const c2 = parseSetup(txt); if (!c2) { flash = {ok:false, text:"No setup code found. Paste it into the box first."}; return renderYou(); } const linked = applySetup(c2); flash = {ok:true, text: linked ? "Connected. Syncing your nights." : "Google client saved. Now tap Sign in with Google."}; renderYou(); if (linked) sync(); });
   on("signin", () => signIn());
   on("syncNow", () => sync());
   on("syncOld", () => sync({history:true}));
@@ -1023,13 +1028,33 @@ function applySetup(c) {
   if (c.refresh) { LS.set("tokens", {access: null, refreshToken: c.refresh, exp: 0, at: new Date().toISOString(), via: "laptop"}); return true; }
   return false;
 }
+function handleSetupLink() {
+  if (!location.hash.startsWith("#setup=")) return null;
+  const code = location.hash.slice(7), c = parseSetup(code);
+  if (!c) { history.replaceState(null, "", location.pathname + "#you"); flash = {ok:false, text:"That setup link was not complete. Scan the QR code again."}; return "bad"; }
+  if (!standalone()) { document.querySelectorAll('link[rel="manifest"]').forEach(l => l.remove()); renderSetup(c, code); return "safari"; }
+  const t = tokens();
+  history.replaceState(null, "", location.pathname + "#night");
+  if (c.refresh && t?.refreshToken === c.refresh) return "already";
+  const linked = applySetup(c);
+  flash = {ok:true, text: linked ? "Connected. Syncing your nights." : "Google client saved. Now tap Sign in with Google."};
+  if (linked) setTimeout(() => sync(), 300);
+  return linked ? "linked" : "client";
+}
 function renderSetup(c, code) {
   document.querySelector(".tabbar").hidden = true; $("#datenav").style.visibility = "hidden";
   const sec = $("#s-night"); sec.hidden = false;
-  sec.innerHTML = `<div class="handoff"><div style="font-size:48px">📲</div><div class="title">${c.refresh ? "Your connection is here." : "Your Google client is here."}</div><p class="lede">Three taps to finish on this iPhone${c.refresh ? ". No Google sign-in needed" : ""}:</p>
-    <div class="card" style="text-align:left"><ol class="steps"><li><b>Copy the setup code</b><button class="btn primary block" id="cpySetup" style="margin-top:8px">Copy setup code</button></li><li><b>Add Sleep to your Home Screen</b>Tap the Share button <span style="font-size:18px">⎋</span> at the bottom of Safari, then Add to Home Screen.</li><li><b>Open Sleep from your Home Screen</b>${c.refresh ? "Go to You and tap Paste setup code. Your nights load straight away." : "Go to You and tap Paste setup code, then Sign in with Google."}</li></ol></div></div>`;
-  $("#cpySetup").onclick = async () => { try { await navigator.clipboard.writeText(SETUP_PREFIX + code); $("#cpySetup").textContent = "Copied. Now Share, then Add to Home Screen"; } catch { $("#cpySetup").textContent = "Could not copy: press and hold to copy the address instead"; } };
+  sec.innerHTML = `<div class="handoff"><div style="font-size:48px">📲</div><div class="title">${c.refresh ? "Your connection is here." : "Your Google client is here."}</div><p class="lede">Add Sleep to your Home Screen from this page. The icon carries the connection, so nothing to copy or paste.</p>
+    <div class="card" style="text-align:left"><ol class="steps">
+      <li><b>Delete any old Sleep icon first</b>Press and hold it on the Home Screen, then Remove App, then Delete from Home Screen.</li>
+      <li><b>Tap Share</b>The square with an arrow, at the bottom of Safari.</li>
+      <li><b>Tap Add to Home Screen, then Add</b>Keep the name Sleep.</li>
+      <li><b>Open Sleep from the Home Screen</b>${c.refresh ? "It connects by itself and your nights load." : "Go to You and tap Sign in with Google."}</li>
+    </ol></div>
+    <div class="card" style="text-align:left"><h2>Sleep already on your Home Screen?</h2><p class="note" style="margin-top:4px">Copy the code, open Sleep, go to You, tap the setup code box, tap Paste, then Connect.</p><button class="btn primary block" id="cpySetup">Copy setup code</button></div></div>`;
+  $("#cpySetup").onclick = async () => { try { await navigator.clipboard.writeText(SETUP_PREFIX + code); $("#cpySetup").textContent = "Copied. Now open Sleep from the Home Screen"; } catch { $("#cpySetup").textContent = "Could not copy on this phone: use Add to Home Screen above"; } };
 }
+
 async function useSignin(text) {
   try { const h = JSON.parse(unb64uStr(String(text || "").trim().replace(/^sleep-signin:/, ""))); await exchange(h.c, h.v); flash = {ok:true, text:"Signed in. Syncing your nights."}; renderYou(); sync(); }
   catch (e) { flash = {ok:false, text:"That sign-in code did not work (" + e.message + "). Tap Sign in with Google again and use the new code within 10 minutes."}; renderYou(); }
@@ -1046,6 +1071,19 @@ function renderHandoff(code) {
   $("#cpy").onclick = async () => { try { await navigator.clipboard.writeText("sleep-signin:" + code); $("#cpy").textContent = "Copied. Now go back to Sleep"; } catch { $("#cpy").textContent = "Press and hold the code below to copy it"; } };
 }
 
+
+/* ---------------- unfinished nights ---------------- */
+// Google creates a provisional sleep record during the night and finalises it about 4 hours after
+// you wake (seen on every night 15-24 Nov 2026). Until then minutes and times can still change.
+const FINAL_AFTER = 3 * 3600000;
+const isProvisional = (n) => Boolean(n && n.src === "api" && Date.now() - n.end < 24 * 3600000 && (!n.updated || n.updated - n.end < FINAL_AFTER));
+function maybeSync() {
+  if (!connected() || S.sync.running) return;
+  const last = Date.parse(LS.get("lastSyncAt") || 0) || 0, age = Date.now() - last;
+  const latest = S.nights[S.nights.length - 1];
+  if (age > 30 * 60000 || (isProvisional(latest) && age > 5 * 60000)) sync();
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") maybeSync(); });
 
 /* ---------------- self-update ---------------- */
 async function checkForUpdate() {
@@ -1086,18 +1124,14 @@ let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(pai
 (async () => {
   const r = await handleRedirect();
   if (r?.handoff) return renderHandoff(r.handoff);
-  if (location.hash.startsWith("#setup=")) {
-    const code = location.hash.slice(7), c = parseSetup(code);
-    history.replaceState(null, "", location.pathname + "#you");
-    if (c) { const linked = applySetup(c); if (!standalone()) return renderSetup(c, code); flash = {ok:true, text: linked ? "Connected. Syncing your nights." : "Google client saved. Now tap Sign in with Google."}; if (linked) setTimeout(() => sync(), 300); }
-    else flash = {ok:false, text:"That setup link was not complete. Scan the QR code again."};
-  }
+  const setupResult = handleSetupLink();
+  if (setupResult === "safari") return;
   await loadLocal();
   if (r?.error) flash = {ok:false, text:r.error};
   if (r?.signedIn) { flash = {ok:true, text:"Signed in. Syncing your nights."}; }
   route();
   if (r?.signedIn) sync();
-  else if (connected() && S.mode === "live") { const last = LS.get("lastSyncAt"); if (!last || Date.now() - Date.parse(last) > 3 * 3600000) sync(); }
+  else if (connected()) maybeSync();
   if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) navigator.serviceWorker?.register("sw.js").catch(() => {});
   checkForUpdate();
 })();
